@@ -1,0 +1,26 @@
+version: 2
+
+sources:
+  - name: dash_main  # Logical name for this source
+    database: DEV_RAW_DASH_DB  # Source database name
+    schema: DASH  # Schema within the source database
+    tables:
+      - name: branches
+        description: "Source table containing transaction receipts data."
+      - name: orders
+        description: "Source table containing order details."
+      - name: menucategories
+        description: "Source table containing product categories."
+      - name: customers
+        description: "Source table containing customer information."
+      - name: products
+        description: "Source table containing product details."
+      - name: discounts
+        description: "Source table containing different kinds of discounts"
+      - name: users
+        dbdescription: "Source table containing different kinds of users"
+      - name: revenueledgers
+        dbdescription: "Source table containing revenue breakdown"
+      - name: wallets
+        dbdescription: "Source table containing wallets breakdown"
+

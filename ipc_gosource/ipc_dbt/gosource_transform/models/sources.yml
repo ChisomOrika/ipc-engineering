@@ -1,0 +1,18 @@
+version: 2
+
+sources:
+  - name: gosource_main  # Logical name for this source
+    database: PROD_RAW_GOSOURCE_DB  # Source database name
+    schema: GOSOURCE  # Schema within the source database
+    tables:
+      - name: receipts
+        description: "Source table containing transaction receipts data."
+      - name: orders
+        description: "Source table containing order details."
+      - name: categories
+        description: "Source table containing product categories."
+      - name: customers
+        description: "Source table containing customer information."
+      - name: products
+        description: "Source table containing product details."
+      - name: timelines
