@@ -17,8 +17,8 @@ jobs:
       PG_PORT:             ${{ secrets.PG_PORT }}
       PG_USER:             ${{ secrets.PG_USER }}
       PG_PASSWORD:         ${{ secrets.PG_PASSWORD }}
-      NINEPAY_SECRET:      ${{ secrets.NINEPAY_SECRET }}
-      NINEPAY_API_KEY:     ${{ secrets.NINEPAY_API_KEY }}
+      9JAPAY_SECRET:       ${{ secrets.NINEPAY_SECRET }}
+      9JAPAY_API_KEY:      ${{ secrets.NINEPAY_API_KEY }}
       PAYSTACK_SECRET_KEY: ${{ secrets.PAYSTACK_SECRET_KEY }}
       LENCO_API_TOKEN:     ${{ secrets.LENCO_API_TOKEN }}
       DASH_URL:            ${{ secrets.DASH_URL }}
@@ -50,7 +50,7 @@ jobs:
         run: python ipc_ingestion/paystack_incremental_load.py
 
       - name: 9japay ingestion
-        run: python ipc_ingestion/9jaypay_incremental_load.py
+        run: python ipc_ingestion/9japay_incremental_load.py
 
       - name: Run dbt transformations
         run: |
