@@ -23,16 +23,19 @@ page_header("Revenue & Profitability",
 
 # ─── Queries ──────────────────────────────────────────────────────────────────
 def _profit(s, e):
+    # NULLIF guards against PostgreSQL NaN values in GP/COGS columns
     return run_query(f"""
         SELECT
             service_line,
-            SUM(profit_revenue_amount)       AS revenue,
-            SUM(profit_cogs_amount)          AS cogs,
-            SUM(profit_gross_profit_amount)  AS gp,
+            COALESCE(SUM(profit_revenue_amount), 0)                                AS revenue,
+            COALESCE(SUM(NULLIF(profit_cogs_amount, 'NaN'::numeric)), 0)           AS cogs,
+            COALESCE(SUM(NULLIF(profit_gross_profit_amount, 'NaN'::numeric)), 0)   AS gp,
             CASE WHEN SUM(profit_revenue_amount) > 0
-                 THEN ROUND(SUM(profit_gross_profit_amount)/SUM(profit_revenue_amount)*100,1)
-                 ELSE 0 END AS margin_pct,
-            COUNT(DISTINCT profit_order_id)  AS orders
+                 THEN ROUND((
+                     COALESCE(SUM(NULLIF(profit_gross_profit_amount, 'NaN'::numeric)), 0)
+                     / SUM(profit_revenue_amount) * 100)::numeric, 1)
+                 ELSE 0 END                                                         AS margin_pct,
+            COUNT(DISTINCT profit_order_id)                                         AS orders
         FROM gold.fact_profitability
         WHERE profit_date BETWEEN '{s}' AND '{e}'
         {svc_clause}
@@ -65,11 +68,12 @@ monthly_pnl = run_query(f"""
         TO_CHAR(profit_month, 'Mon YY')      AS label,
         profit_month,
         service_line,
-        SUM(profit_revenue_amount)/1e6       AS revenue_m,
-        SUM(profit_gross_profit_amount)/1e6  AS gp_m,
+        COALESCE(SUM(profit_revenue_amount), 0)/1e6                                        AS revenue_m,
+        COALESCE(SUM(NULLIF(profit_gross_profit_amount, 'NaN'::numeric)), 0)/1e6           AS gp_m,
         CASE WHEN SUM(profit_revenue_amount) > 0
-             THEN ROUND(SUM(profit_gross_profit_amount)/SUM(profit_revenue_amount)*100,1)
-             ELSE 0 END                      AS margin_pct
+             THEN ROUND((COALESCE(SUM(NULLIF(profit_gross_profit_amount, 'NaN'::numeric)), 0)
+                        / SUM(profit_revenue_amount) * 100)::numeric, 1)
+             ELSE 0 END                                                                     AS margin_pct
     FROM gold.fact_profitability
     WHERE profit_date BETWEEN '{start}' AND '{end}'
     {svc_clause}
@@ -95,8 +99,8 @@ mom_growth = run_query(f"""
         rev_m,
         LAG(rev_m) OVER (ORDER BY revenue_month) AS prev_rev_m,
         CASE WHEN LAG(rev_m) OVER (ORDER BY revenue_month) > 0
-             THEN ROUND((rev_m - LAG(rev_m) OVER (ORDER BY revenue_month))
-                        / LAG(rev_m) OVER (ORDER BY revenue_month) * 100, 1)
+             THEN ROUND(((rev_m - LAG(rev_m) OVER (ORDER BY revenue_month))
+                        / LAG(rev_m) OVER (ORDER BY revenue_month) * 100)::numeric, 1)
              ELSE 0 END AS growth_pct
     FROM monthly
     ORDER BY revenue_month
@@ -110,7 +114,7 @@ top_customers = run_query(f"""
         SUM(profit_revenue_amount)      AS revenue,
         SUM(profit_gross_profit_amount) AS gp,
         COUNT(DISTINCT profit_order_id) AS orders,
-        ROUND(SUM(profit_gross_profit_amount)/NULLIF(SUM(profit_revenue_amount),0)*100,1) AS margin_pct
+        ROUND((SUM(profit_gross_profit_amount)/NULLIF(SUM(profit_revenue_amount),0)*100)::numeric,1) AS margin_pct
     FROM gold.fact_profitability
     WHERE profit_date BETWEEN '{start}' AND '{end}'
       AND profit_customer_name IS NOT NULL
@@ -120,13 +124,8 @@ top_customers = run_query(f"""
     LIMIT 20
 """)
 
-# Customer concentration
-total_rev_all = run_query(f"""
-    SELECT SUM(profit_revenue_amount) AS total
-    FROM gold.fact_profitability
-    WHERE profit_date BETWEEN '{start}' AND '{end}'
-    {svc_clause}
-""")
+# Customer concentration — derived from curr_profit (no extra query needed)
+grand_total = float(curr_profit["revenue"].sum()) if not curr_profit.empty else 1.0
 
 # ─── KPI Row ─────────────────────────────────────────────────────────────────
 section_title("REVENUE & PROFITABILITY KPIs")
@@ -242,7 +241,6 @@ if not monthly_pnl.empty:
 st.markdown("---")
 section_title("TOP 20 CUSTOMERS BY REVENUE")
 if not top_customers.empty:
-    grand_total = float(total_rev_all.iloc[0]["total"] or 1)
     display = top_customers.copy()
     display["share_pct"] = (display["revenue"] / grand_total * 100).round(1)
     display["revenue"]   = display["revenue"].apply(lambda x: naira(float(x)))

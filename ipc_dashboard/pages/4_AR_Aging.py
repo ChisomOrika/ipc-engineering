@@ -22,13 +22,19 @@ page_header("Accounts Receivable — Aging Analysis",
 
 # ─── Queries ──────────────────────────────────────────────────────────────────
 ar_kpi = run_query("""
+    WITH ltm AS (
+        SELECT SUM(revenue_amount) AS ltm_rev
+        FROM gold.fact_revenue
+        WHERE revenue_order_date >= CURRENT_DATE - INTERVAL '12 months'
+    )
     SELECT
-        SUM(ar_outstanding_amount)             AS total_ar,
-        COUNT(*)                               AS invoices,
-        COUNT(DISTINCT ar_customer_id_fk)      AS customers,
-        MAX(ar_days_outstanding)               AS oldest_days,
-        AVG(ar_days_outstanding)               AS avg_days
-    FROM gold.fact_ar_aging
+        SUM(a.ar_outstanding_amount)                                        AS total_ar,
+        COUNT(*)                                                            AS invoices,
+        COUNT(DISTINCT a.ar_customer_id_fk)                                AS customers,
+        MAX(a.ar_days_outstanding)                                          AS oldest_days,
+        AVG(a.ar_days_outstanding)                                          AS avg_days,
+        ROUND((SUM(a.ar_outstanding_amount) / NULLIF(MAX(l.ltm_rev), 0) * 365)::numeric, 0) AS dso_days
+    FROM gold.fact_ar_aging a, ltm l
 """)
 
 by_bucket = run_query("""
@@ -43,18 +49,6 @@ by_bucket = run_query("""
     ORDER BY ar_aging_bucket_sort
 """)
 
-# DSO: AR / (LTM Revenue / 365)
-dso = run_query("""
-    WITH ltm AS (
-        SELECT SUM(revenue_amount) AS ltm_rev
-        FROM gold.fact_revenue
-        WHERE revenue_order_date >= CURRENT_DATE - INTERVAL '12 months'
-    ),
-    ar AS (SELECT SUM(ar_outstanding_amount) AS total_ar FROM gold.fact_ar_aging)
-    SELECT
-        ROUND((ar.total_ar / NULLIF(ltm.ltm_rev,0)) * 365, 0) AS dso_days
-    FROM ar, ltm
-""")
 
 top_customers = run_query("""
     SELECT
@@ -105,7 +99,7 @@ invoices  = int(_v(ar_kpi, "invoices"))
 customers = int(_v(ar_kpi, "customers"))
 oldest    = int(_v(ar_kpi, "oldest_days"))
 avg_days  = _v(ar_kpi, "avg_days")
-dso_days  = _v(dso, "dso_days")
+dso_days  = _v(ar_kpi, "dso_days")
 
 overdue_90_amount = float(
     by_bucket[by_bucket["ar_aging_bucket"] == "90+ days"]["amount"].sum()
@@ -128,16 +122,28 @@ elif overdue_90_pct > 15:
 
 cols = st.columns(5)
 cols[0].metric("📋 TOTAL AR",        naira(total_ar),
-               help="All outstanding GoSource credit invoices")
+               help=(
+                   "Sum of ar_outstanding_amount for all GoSource credit orders that are "
+                   "Delivered but not yet Paid. Filter: order_payment_method=Credit AND "
+                   "order_status=Delivered AND order_payment_status≠Paid. "
+                   "Source: gold.fact_ar_aging"
+               ))
 cols[1].metric("📅 DSO",             f"{int(dso_days)} days",
-               help="Days Sales Outstanding = AR / (Annual Revenue / 365). Lower is better.")
+               help=(
+                   "Days Sales Outstanding = (Total AR Outstanding ÷ Last-12-Month Revenue) × 365. "
+                   "Measures how many days on average it takes to collect payment after a sale. "
+                   "Lower is better. Source: gold.fact_ar_aging + gold.fact_revenue"
+               ))
 cols[2].metric("⚠️ AVG DAYS AGING",  f"{avg_days:.0f} days",
-               delta=f"Oldest: {oldest} days", delta_color="off")
+               delta=f"Oldest: {oldest} days", delta_color="off",
+               help="Average number of days invoices have been outstanding (from invoice date to today). Source: gold.fact_ar_aging → ar_days_outstanding")
 cols[3].metric("📂 OPEN INVOICES",   count(invoices),
-               delta=f"{count(customers)} customers", delta_color="off")
+               delta=f"{count(customers)} customers", delta_color="off",
+               help="Count of distinct open (unpaid delivered) GoSource credit invoices and the number of unique customers with outstanding balances.")
 cols[4].metric("🔴 90+ DAYS",        naira(overdue_90_amount),
                delta=f"{pct(overdue_90_pct)} of total AR",
-               delta_color="inverse" if overdue_90_pct > 10 else "off")
+               delta_color="inverse" if overdue_90_pct > 10 else "off",
+               help="Total value of invoices that have been outstanding for more than 90 days — highest collection risk. Source: gold.fact_ar_aging where ar_aging_bucket='90+ days'")
 
 st.markdown("---")
 

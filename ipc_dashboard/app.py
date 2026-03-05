@@ -17,7 +17,7 @@ from utils.periods import sidebar_filters
 
 # ─── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="IPC Finance Dashboard",
+    page_title="Overview · IPC",
     page_icon="🏦",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -27,78 +27,94 @@ inject_css()
 start, end, prev_start, prev_end, period_label, _ = sidebar_filters()
 
 page_header(
-    "IPC Group — Finance Dashboard",
+    "IPC Group — Overview",
     f"Executive Summary · {period_label} · as of {dt.date.today().strftime('%d %b %Y')}"
 )
 
 # ─── Queries ──────────────────────────────────────────────────────────────────
+# One master KPI query replaces 9+ individual round-trips
 
-def _rev(s, e):
-    return run_query(f"""
+kpi = run_query(f"""
+    WITH rev AS (
         SELECT
-            SUM(revenue_amount)  AS revenue,
-            COUNT(*)             AS orders
+            SUM(CASE WHEN revenue_order_date BETWEEN '{start}' AND '{end}'
+                     THEN revenue_amount END)                               AS curr_rev,
+            COUNT(CASE WHEN revenue_order_date BETWEEN '{start}' AND '{end}'
+                       THEN 1 END)                                          AS curr_orders,
+            COUNT(CASE WHEN revenue_order_date BETWEEN '{start}' AND '{end}'
+                       AND service_line = 'DAASH' THEN 1 END)              AS curr_daash_orders,
+            COUNT(CASE WHEN revenue_order_date BETWEEN '{start}' AND '{end}'
+                       AND service_line = 'GoSource' THEN 1 END)           AS curr_gs_orders,
+            SUM(CASE WHEN revenue_order_date BETWEEN '{prev_start}' AND '{prev_end}'
+                     THEN revenue_amount END)                               AS prev_rev,
+            COUNT(CASE WHEN revenue_order_date BETWEEN '{prev_start}' AND '{prev_end}'
+                       THEN 1 END)                                          AS prev_orders,
+            COUNT(CASE WHEN revenue_order_date BETWEEN '{prev_start}' AND '{prev_end}'
+                       AND service_line = 'DAASH' THEN 1 END)              AS prev_daash_orders,
+            COUNT(CASE WHEN revenue_order_date BETWEEN '{prev_start}' AND '{prev_end}'
+                       AND service_line = 'GoSource' THEN 1 END)           AS prev_gs_orders
         FROM gold.fact_revenue
-        WHERE revenue_order_date BETWEEN '{s}' AND '{e}'
-    """)
-
-def _profit(s, e):
-    return run_query(f"""
+        WHERE revenue_order_date BETWEEN '{prev_start}' AND '{end}'
+    ),
+    prof AS (
+        -- NULLIF guards against PostgreSQL NaN values stored in GP/COGS columns
         SELECT
-            SUM(profit_revenue_amount)       AS revenue,
-            SUM(profit_gross_profit_amount)  AS gp,
-            CASE WHEN SUM(profit_revenue_amount) > 0
-                 THEN ROUND(SUM(profit_gross_profit_amount)/SUM(profit_revenue_amount)*100,1)
-                 ELSE 0 END                  AS margin
+            COALESCE(SUM(CASE WHEN profit_date BETWEEN '{start}' AND '{end}'
+                         THEN NULLIF(profit_gross_profit_amount, 'NaN'::numeric) END), 0) AS curr_gp,
+            COALESCE(SUM(CASE WHEN profit_date BETWEEN '{start}' AND '{end}'
+                         THEN profit_revenue_amount END), 0)                               AS curr_prof_rev,
+            COALESCE(SUM(CASE WHEN profit_date BETWEEN '{start}' AND '{end}'
+                         THEN NULLIF(profit_cogs_amount, 'NaN'::numeric) END), 0)         AS curr_cogs,
+            COALESCE(SUM(CASE WHEN profit_date BETWEEN '{prev_start}' AND '{prev_end}'
+                         THEN NULLIF(profit_gross_profit_amount, 'NaN'::numeric) END), 0) AS prev_gp,
+            COALESCE(SUM(CASE WHEN profit_date BETWEEN '{prev_start}' AND '{prev_end}'
+                         THEN profit_revenue_amount END), 0)                               AS prev_prof_rev
         FROM gold.fact_profitability
-        WHERE profit_date BETWEEN '{s}' AND '{e}'
-    """)
-
-def _exp(s, e):
-    return run_query(f"""
-        SELECT SUM(expense_amount) AS expenses
+        WHERE profit_date BETWEEN '{prev_start}' AND '{end}'
+    ),
+    exp AS (
+        SELECT
+            SUM(CASE WHEN expense_date BETWEEN '{start}' AND '{end}'
+                     THEN expense_amount END)                               AS curr_exp,
+            SUM(CASE WHEN expense_date BETWEEN '{prev_start}' AND '{prev_end}'
+                     THEN expense_amount END)                               AS prev_exp
         FROM gold.fact_expenses
-        WHERE expense_date BETWEEN '{s}' AND '{e}'
-    """)
-
-curr_rev    = _rev(start, end)
-prev_rev    = _rev(prev_start, prev_end)
-curr_profit = _profit(start, end)
-prev_profit = _profit(prev_start, prev_end)
-curr_exp    = _exp(start, end)
-prev_exp    = _exp(prev_start, prev_end)
-
-cash_now = run_query("""
-    SELECT cumulative_net_movement_amount AS cash
-    FROM gold.fact_cash_position
-    ORDER BY cash_position_date DESC LIMIT 1
-""")
-
-ar_now = run_query("""
-    SELECT SUM(ar_outstanding_amount) AS ar, COUNT(*) AS cnt
-    FROM gold.fact_ar_aging
-""")
-
-# Cash runway: avg 3-month burn
-burn_rate = run_query("""
-    SELECT AVG(monthly_burn) AS avg_burn
-    FROM (
-        SELECT cash_position_month, SUM(daily_outflow_amount) AS monthly_burn
+        WHERE expense_date BETWEEN '{prev_start}' AND '{end}'
+    ),
+    cash AS (
+        SELECT cumulative_net_movement_amount AS cash_balance
         FROM gold.fact_cash_position
-        WHERE cash_position_date >= CURRENT_DATE - INTERVAL '3 months'
-        GROUP BY cash_position_month
-        LIMIT 3
-    ) t
-""")
-
-# P&L bridge numbers (full period)
-pnl_bridge = run_query(f"""
+        ORDER BY cash_position_date DESC LIMIT 1
+    ),
+    ar AS (
+        SELECT
+            COALESCE(SUM(ar_outstanding_amount), 0) AS total_ar,
+            COUNT(*)                                AS ar_count
+        FROM gold.fact_ar_aging
+    ),
+    burn AS (
+        SELECT COALESCE(AVG(monthly_burn), 0) AS avg_burn
+        FROM (
+            SELECT cash_position_month, SUM(daily_outflow_amount) AS monthly_burn
+            FROM gold.fact_cash_position
+            WHERE cash_position_date >= CURRENT_DATE - INTERVAL '3 months'
+            GROUP BY cash_position_month
+            ORDER BY cash_position_month DESC
+            LIMIT 3
+        ) t
+    )
     SELECT
-        SUM(profit_revenue_amount)       AS revenue,
-        SUM(profit_cogs_amount)          AS cogs,
-        SUM(profit_gross_profit_amount)  AS gross_profit
-    FROM gold.fact_profitability
-    WHERE profit_date BETWEEN '{start}' AND '{end}'
+        rev.curr_rev,    rev.curr_orders,
+        rev.curr_daash_orders, rev.curr_gs_orders,
+        rev.prev_rev,    rev.prev_orders,
+        rev.prev_daash_orders, rev.prev_gs_orders,
+        prof.curr_gp,    prof.curr_prof_rev, prof.curr_cogs,
+        prof.prev_gp,    prof.prev_prof_rev,
+        exp.curr_exp,    exp.prev_exp,
+        cash.cash_balance,
+        ar.total_ar,     ar.ar_count,
+        burn.avg_burn
+    FROM rev, prof, exp, cash, ar, burn
 """)
 
 # Monthly revenue + expenses trend for combo chart
@@ -149,54 +165,66 @@ def _v(df, col, default=0):
 def _delta(curr, prev):
     return ((curr - prev) / prev * 100) if prev and prev > 0 else None
 
-curr_revenue  = _v(curr_rev,    "revenue")
-prev_revenue  = _v(prev_rev,    "revenue")
-curr_orders   = int(_v(curr_rev, "orders"))
-prev_orders   = int(_v(prev_rev, "orders"))
-curr_gp       = _v(curr_profit, "gp")
-prev_gp       = _v(prev_profit, "gp")
-curr_margin   = _v(curr_profit, "margin")
-prev_margin   = _v(prev_profit, "margin")
-curr_expenses = _v(curr_exp,    "expenses")
-prev_expenses = _v(prev_exp,    "expenses")
-cash          = _v(cash_now,    "cash")
-total_ar      = _v(ar_now,      "ar")
-ar_count      = int(_v(ar_now,  "cnt"))
-avg_burn      = _v(burn_rate,   "avg_burn")
+curr_revenue  = _v(kpi, "curr_rev")
+prev_revenue  = _v(kpi, "prev_rev")
+curr_orders        = int(_v(kpi, "curr_orders"))
+prev_orders        = int(_v(kpi, "prev_orders"))
+curr_daash_orders  = int(_v(kpi, "curr_daash_orders"))
+curr_gs_orders     = int(_v(kpi, "curr_gs_orders"))
+prev_daash_orders  = int(_v(kpi, "prev_daash_orders"))
+prev_gs_orders     = int(_v(kpi, "prev_gs_orders"))
+curr_prof_rev = _v(kpi, "curr_prof_rev")
+prev_prof_rev = _v(kpi, "prev_prof_rev")
+curr_cogs     = _v(kpi, "curr_cogs")
+curr_gp       = _v(kpi, "curr_gp")
+prev_gp       = _v(kpi, "prev_gp")
+curr_margin   = (curr_gp / curr_prof_rev * 100) if curr_prof_rev > 0 else 0
+prev_margin   = (prev_gp / prev_prof_rev * 100) if prev_prof_rev > 0 else 0
+curr_expenses = _v(kpi, "curr_exp")
+prev_expenses = _v(kpi, "prev_exp")
+cash          = _v(kpi, "cash_balance")
+total_ar      = _v(kpi, "total_ar")
+ar_count      = int(_v(kpi, "ar_count"))
+avg_burn      = _v(kpi, "avg_burn")
 runway_months = (cash / avg_burn) if avg_burn > 0 else None
 
 aov_curr = curr_revenue / curr_orders if curr_orders > 0 else 0
-aov_prev_orders = int(_v(prev_rev, "orders"))
-aov_prev_rev    = _v(prev_rev, "revenue")
-aov_prev = aov_prev_rev / aov_prev_orders if aov_prev_orders > 0 else 0
+aov_prev = prev_revenue / prev_orders if prev_orders > 0 else 0
 
 # P&L bridge
-b_rev  = _v(pnl_bridge, "revenue")
-b_cogs = _v(pnl_bridge, "cogs")
-b_gp   = _v(pnl_bridge, "gross_profit")
+b_rev  = curr_prof_rev
+b_cogs = curr_cogs
+b_gp   = curr_gp
 b_opex = curr_expenses
 b_net  = b_gp - b_opex
 
 # ─── Row 1: Primary KPIs ──────────────────────────────────────────────────────
 section_title("KEY PERFORMANCE INDICATORS")
+kpi_help = {
+    "REVENUE":         "Total order value (DAASH + GoSource) for delivered orders in the period. Source: gold.fact_revenue → revenue_amount",
+    "GROSS PROFIT":    "DAASH: platform fee from revenue ledger per delivered order. GoSource: service charge on credit orders. Source: gold.fact_profitability → profit_gross_profit_amount",
+    "GROSS MARGIN":    "Gross Profit ÷ Revenue × 100. pp = percentage points vs previous period.",
+    "DAASH ORDERS":    "Delivered DAASH orders in the period. Includes direct (Transfer/Card/Cash) and aggregator (Chowdeck/Glovo) channels. Source: gold.fact_revenue WHERE service_line='DAASH'",
+    "GOSOURCE ORDERS": "Delivered + paid GoSource orders in the period. Source: gold.fact_revenue WHERE service_line='GoSource'",
+    "AVG ORDER VALUE": "Total Revenue ÷ Total Order Count for the period.",
+    "TOTAL EXPENSES":  "Sum of all Lenco bank debits categorised as business expenses. Source: gold.fact_expenses",
+}
 cols = st.columns(6)
 kpis = [
-    ("REVENUE",       naira(curr_revenue),  _delta(curr_revenue,  prev_revenue),  "up",   "💰"),
-    ("GROSS PROFIT",  naira(curr_gp),       _delta(curr_gp,       prev_gp),       "up",   "📊"),
-    ("GROSS MARGIN",  pct(curr_margin),     curr_margin - prev_margin if prev_margin else None, "up", "📈"),
-    ("TOTAL ORDERS",  count(curr_orders),   _delta(curr_orders,   prev_orders),   "up",   "🛒"),
-    ("AVG ORDER VALUE", naira(aov_curr),    _delta(aov_curr,      aov_prev),      "up",   "🎯"),
-    ("TOTAL EXPENSES",  naira(curr_expenses), _delta(curr_expenses, prev_expenses), "down", "💸"),
+    ("REVENUE",         naira(curr_revenue),      _delta(curr_revenue,       prev_revenue),       "up",   "💰"),
+    ("GROSS PROFIT",    naira(curr_gp),            _delta(curr_gp,            prev_gp),            "up",   "📊"),
+    ("GROSS MARGIN",    pct(curr_margin),          curr_margin - prev_margin if prev_margin else None, "up", "📈"),
+    ("DAASH ORDERS",    count(curr_daash_orders),  _delta(curr_daash_orders,  prev_daash_orders),  "up",   "🍔"),
+    ("GOSOURCE ORDERS", count(curr_gs_orders),     _delta(curr_gs_orders,     prev_gs_orders),     "up",   "📦"),
+    ("TOTAL EXPENSES",  naira(curr_expenses),      _delta(curr_expenses,      prev_expenses),      "down", "💸"),
 ]
 for col, (label, val, delta, direction, icon) in zip(cols, kpis):
     if label == "GROSS MARGIN" and delta is not None:
-        # delta is pp not %, display differently
         arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "→")
         color = "#22C55E" if delta > 0 else "#EF4444"
-        d_str = f"{arrow} {abs(delta):.1f}pp vs prev"
-        col.metric(f"{icon} {label}", val)
+        col.metric(f"{icon} {label}", val, help=kpi_help[label])
         col.markdown(
-            f"<div style='margin-top:-16px;font-size:12px;color:{color};'>{d_str}</div>",
+            f"<div style='margin-top:-16px;font-size:12px;color:{color};'>{arrow} {abs(delta):.1f}pp vs prev</div>",
             unsafe_allow_html=True
         )
     else:
@@ -204,38 +232,53 @@ for col, (label, val, delta, direction, icon) in zip(cols, kpis):
             f"{icon} {label}", val,
             delta=(f"{'+' if (delta or 0) >= 0 else ''}{delta:.1f}% vs prev" if delta is not None else None),
             delta_color="normal" if direction == "up" else "inverse",
+            help=kpi_help[label],
         )
 
 st.markdown("")
 
 # ─── Row 2: Financial health ───────────────────────────────────────────────────
 section_title("FINANCIAL HEALTH")
-c1, c2, c3 = st.columns([2, 1, 1])
+c1, c2, c3 = st.columns(3)
 
 with c1:
-    st.markdown(runway_card(runway_months), unsafe_allow_html=True)
+    st.metric(
+        "🔥 AVG MONTHLY BURN",
+        naira(avg_burn),
+        delta="3-month trailing average",
+        delta_color="off",
+        help=(
+            "Average monthly cash outflows from the Lenco bank account over the last 3 months. "
+            "Calculated as: SUM(daily_outflow_amount) per month → 3-month average. "
+            "Source: gold.fact_cash_position"
+        )
+    )
 
 with c2:
-    prev_burn = run_query(f"""
-        SELECT SUM(daily_outflow_amount) AS prev_expenses
-        FROM gold.fact_cash_position
-        WHERE cash_position_date BETWEEN '{prev_start}' AND '{prev_end}'
-    """)
-    prev_exp_val = _v(prev_burn, "prev_expenses")
     st.metric(
-        "🏦 Cash Position",
+        "🏦 LENCO NET MOVEMENT",
         naira(cash),
-        delta=None,
-        help="Current Lenco bank running balance"
+        delta="Cumulative since first recorded txn",
+        delta_color="off",
+        help=(
+            "Cumulative net of ALL Lenco transactions = Total Credits − Total Debits. "
+            "Verified against raw_lenco.transactions (no duplicates). "
+            "This is NET MOVEMENT — not the actual account opening balance. "
+            "Source: gold.fact_cash_position (cumulative_net_movement_amount)"
+        )
     )
 
 with c3:
     st.metric(
-        "📋 AR Outstanding",
+        "📋 AR OUTSTANDING",
         naira(total_ar),
-        delta=f"{ar_count} open invoices",
+        delta=f"{ar_count} open GoSource invoices",
         delta_color="off",
-        help="GoSource credit orders unpaid"
+        help=(
+            "Total unpaid GoSource credit orders that have been delivered. "
+            "Filter: order_payment_method='Credit' AND order_status='Delivered' AND NOT paid. "
+            "Source: gold.fact_ar_aging (ar_outstanding_amount)"
+        )
     )
 
 st.markdown("---")
