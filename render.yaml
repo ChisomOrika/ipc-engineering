@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: ipc-finance-dashboard
+    env: python
+    plan: starter          # $7/month — keeps the app always-on (no sleep)
+    buildCommand: pip install -r ipc_dashboard/requirements.txt
+    startCommand: streamlit run ipc_dashboard/app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: PG_HOST
+        sync: false        # You will paste this in Render dashboard
+      - key: PG_PORT
+        sync: false
+      - key: PG_USER
+        sync: false
+      - key: PG_PASSWORD
+        sync: false
+      - key: PG_DB
+        value: PROD_ANALYTICS_DB
