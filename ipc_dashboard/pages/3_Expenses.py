@@ -1,85 +1,79 @@
 import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import datetime as dt
 import streamlit as st
-import plotly.express as px
 import plotly.graph_objects as go
+import plotly.express as px
 
-from utils.db  import run_query
-from utils.fmt import naira, pct, count
+from utils.db      import run_query
+from utils.fmt     import naira, pct, count
+from utils.styles  import (inject_css, page_header, section_title, CHART_LAYOUT,
+                            COLOR_POSITIVE, COLOR_NEGATIVE, COLOR_NEUTRAL)
+from utils.periods import sidebar_filters
 
 st.set_page_config(page_title="Expenses · IPC", page_icon="💸", layout="wide")
+inject_css()
 
-# ─── Sidebar ──────────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown("## IPC Finance Dashboard")
-    st.markdown("---")
-    period = st.selectbox(
-        "Time Period",
-        ["Month to Date", "Last 30 days", "Last 90 days",
-         "This Year", "Last 12 months", "All Time", "Custom"],
-        index=3,
-    )
-    today = dt.date.today()
-    if period == "Month to Date":
-        start, end = today.replace(day=1), today
-    elif period == "Last 30 days":
-        start, end = today - dt.timedelta(days=30), today
-    elif period == "Last 90 days":
-        start, end = today - dt.timedelta(days=90), today
-    elif period == "This Year":
-        start, end = today.replace(month=1, day=1), today
-    elif period == "Last 12 months":
-        start, end = today - dt.timedelta(days=365), today
-    elif period == "All Time":
-        start, end = dt.date(2020, 1, 1), today
-    else:
-        start = st.date_input("From", today - dt.timedelta(days=365))
-        end   = st.date_input("To",   today)
-    st.markdown(f"**{start.strftime('%d %b %Y')} → {end.strftime('%d %b %Y')}**")
-    st.markdown("---")
-    st.caption("Data refreshes every hour")
+start, end, prev_start, prev_end, period_label, _ = sidebar_filters()
+
+page_header("Cost Management & Expenses",
+            f"{period_label} · Lenco Bank Debits")
 
 # ─── Queries ──────────────────────────────────────────────────────────────────
-expense_kpi = run_query(f"""
-    SELECT
-        SUM(expense_amount)                                              AS total,
-        SUM(CASE WHEN expense_type = 'Fixed'    THEN expense_amount ELSE 0 END) AS fixed,
-        SUM(CASE WHEN expense_type = 'Variable' THEN expense_amount ELSE 0 END) AS variable
-    FROM gold.fact_expenses
-    WHERE expense_date BETWEEN '{start}' AND '{end}'
+def _exp_kpi(s, e):
+    return run_query(f"""
+        SELECT
+            SUM(expense_amount)                                                AS total,
+            SUM(CASE WHEN expense_type='Fixed'    THEN expense_amount ELSE 0 END) AS fixed,
+            SUM(CASE WHEN expense_type='Variable' THEN expense_amount ELSE 0 END) AS variable,
+            COUNT(*) AS txn_count
+        FROM gold.fact_expenses
+        WHERE expense_date BETWEEN '{s}' AND '{e}'
+    """)
+
+curr_kpi = _exp_kpi(start, end)
+prev_kpi = _exp_kpi(prev_start, prev_end)
+
+curr_rev = run_query(f"""
+    SELECT SUM(revenue_amount) AS revenue
+    FROM gold.fact_revenue
+    WHERE revenue_order_date BETWEEN '{start}' AND '{end}'
 """)
 
 by_group = run_query(f"""
     SELECT
         expense_group,
-        SUM(expense_amount)  AS amount,
-        COUNT(*)             AS txn_count
+        expense_type,
+        SUM(expense_amount) AS amount,
+        COUNT(*) AS txns
     FROM gold.fact_expenses
     WHERE expense_date BETWEEN '{start}' AND '{end}'
-    GROUP BY expense_group
+    GROUP BY expense_group, expense_type
     ORDER BY amount DESC
 """)
 
-by_type = run_query(f"""
+by_category = run_query(f"""
     SELECT
-        expense_type,
-        SUM(expense_amount) AS amount
+        expense_category,
+        expense_group,
+        SUM(expense_amount) AS amount,
+        COUNT(*) AS txns
     FROM gold.fact_expenses
     WHERE expense_date BETWEEN '{start}' AND '{end}'
-    GROUP BY expense_type
+    GROUP BY expense_category, expense_group
+    ORDER BY amount DESC
 """)
 
 monthly_by_group = run_query(f"""
     SELECT
-        TO_CHAR(expense_month, 'Mon YY')  AS month_label,
+        TO_CHAR(expense_month, 'Mon YY')  AS label,
         expense_month,
         expense_group,
-        SUM(expense_amount) / 1e6         AS amount_m
+        expense_type,
+        SUM(expense_amount)/1e6 AS amount_m
     FROM gold.fact_expenses
     WHERE expense_date BETWEEN '{start}' AND '{end}'
-    GROUP BY expense_month, expense_group
+    GROUP BY expense_month, expense_group, expense_type
     ORDER BY expense_month
 """)
 
@@ -94,95 +88,143 @@ detail = run_query(f"""
     FROM gold.fact_expenses
     WHERE expense_date BETWEEN '{start}' AND '{end}'
     ORDER BY expense_date DESC
-    LIMIT 1000
+    LIMIT 500
 """)
 
-# ─── KPIs ─────────────────────────────────────────────────────────────────────
-st.markdown("## 💸 Expenses")
+# ─── Compute scalars ──────────────────────────────────────────────────────────
+def _v(df, col, default=0):
+    if df.empty or df.iloc[0][col] is None: return float(default)
+    return float(df.iloc[0][col])
+def _d(c, p): return ((c-p)/p*100) if p and p > 0 else None
 
-ek = expense_kpi.iloc[0] if not expense_kpi.empty else None
-total_exp  = float(ek["total"]    or 0) if ek is not None else 0
-fixed_exp  = float(ek["fixed"]    or 0) if ek is not None else 0
-var_exp    = float(ek["variable"] or 0) if ek is not None else 0
+total_exp  = _v(curr_kpi, "total")
+prev_total = _v(prev_kpi, "total")
+fixed_exp  = _v(curr_kpi, "fixed")
+var_exp    = _v(curr_kpi, "variable")
+txn_count  = int(_v(curr_kpi, "txn_count"))
+revenue    = _v(curr_rev, "revenue")
+exp_ratio  = (total_exp / revenue * 100) if revenue > 0 else 0
 fixed_pct  = (fixed_exp / total_exp * 100) if total_exp > 0 else 0
-var_pct    = 100 - fixed_pct
+top_group  = by_group.iloc[0]["expense_group"] if not by_group.empty else "—"
 
-top_group = by_group.iloc[0]["expense_group"] if not by_group.empty else "—"
-
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Total Expenses",    naira(total_exp))
-col2.metric("Fixed Costs",       naira(fixed_exp),  delta=f"{fixed_pct:.1f}%",  delta_color="off")
-col3.metric("Variable Costs",    naira(var_exp),    delta=f"{var_pct:.1f}%",    delta_color="off")
-col4.metric("Top Expense Group", top_group)
+# ─── KPIs ─────────────────────────────────────────────────────────────────────
+section_title("COST OVERVIEW")
+cols = st.columns(5)
+cols[0].metric("💸 TOTAL EXPENSES", naira(total_exp),
+               delta=(f"{_d(total_exp, prev_total):+.1f}% vs prev"
+                      if _d(total_exp, prev_total) is not None else None),
+               delta_color="inverse")
+cols[1].metric("🔒 FIXED COSTS",   naira(fixed_exp),
+               delta=f"{fixed_pct:.1f}% of total", delta_color="off")
+cols[2].metric("⚡ VARIABLE COSTS", naira(var_exp),
+               delta=f"{100-fixed_pct:.1f}% of total", delta_color="off")
+cols[3].metric("📊 EXPENSE / REVENUE", pct(exp_ratio),
+               help="Expenses as % of revenue — lower is better",
+               delta=None)
+cols[4].metric("🏷️ TOP CATEGORY", top_group)
 
 st.markdown("---")
 
-# ─── Charts ───────────────────────────────────────────────────────────────────
-left, right = st.columns(2)
+# ─── Bar chart + donut ───────────────────────────────────────────────────────
+left, right = st.columns([3, 2])
 
 with left:
-    st.markdown("#### Expense Breakdown by Group")
+    section_title("EXPENSES BY GROUP")
     if not by_group.empty:
-        fig = px.bar(
-            by_group,
-            x="amount", y="expense_group",
+        group_totals = by_group.groupby("expense_group")["amount"].sum().reset_index()
+        group_totals = group_totals.sort_values("amount", ascending=True)
+        fig = go.Figure(go.Bar(
+            x=group_totals["amount"] / 1e6,
+            y=group_totals["expense_group"],
             orientation="h",
-            color="expense_group",
-            color_discrete_sequence=px.colors.qualitative.Set2,
-            labels={"amount": "₦", "expense_group": ""},
-        )
-        fig.update_layout(
-            showlegend=False,
-            plot_bgcolor="white",
-            height=320,
-            margin=dict(t=10, b=0, l=0, r=0),
-        )
-        fig.update_xaxes(gridcolor="#F0F0F0")
+            marker_color="#3B82F6",
+            text=(group_totals["amount"]/1e6).apply(lambda x: f"₦{x:.1f}M"),
+            textposition="outside",
+        ))
+        fig.update_layout(**CHART_LAYOUT, height=300,
+                          xaxis_title="₦M", showlegend=False)
+        fig.update_xaxes(gridcolor="#F1F5F9")
         st.plotly_chart(fig, use_container_width=True)
 
 with right:
-    st.markdown("#### Fixed vs Variable")
-    if not by_type.empty:
-        fig2 = px.pie(
-            by_type, values="amount", names="expense_type",
-            color="expense_type",
-            color_discrete_map={"Fixed": "#023E8A", "Variable": "#48CAE4"},
-            hole=0.5,
-        )
-        fig2.update_traces(textinfo="percent+label")
-        fig2.update_layout(
-            showlegend=False,
-            margin=dict(t=10, b=0, l=0, r=0),
-            height=320,
-        )
+    section_title("FIXED vs VARIABLE SPLIT")
+    type_data = run_query(f"""
+        SELECT expense_type, SUM(expense_amount) AS amount
+        FROM gold.fact_expenses
+        WHERE expense_date BETWEEN '{start}' AND '{end}'
+        GROUP BY expense_type
+    """)
+    if not type_data.empty:
+        fig2 = go.Figure(go.Pie(
+            labels=type_data["expense_type"],
+            values=type_data["amount"],
+            hole=0.55,
+            marker_colors=["#1E40AF", "#93C5FD"],
+            textinfo="percent+label",
+            textfont_size=12,
+        ))
+        fig2.update_layout(showlegend=False,
+                           margin=dict(t=10, b=0, l=0, r=0), height=300)
         st.plotly_chart(fig2, use_container_width=True)
 
-st.markdown("#### Monthly Expenses by Group")
+# Monthly stacked trend
+section_title("MONTHLY EXPENSE TREND BY GROUP")
 if not monthly_by_group.empty:
+    grp_totals_by_month = (
+        monthly_by_group.groupby(["label", "expense_month", "expense_group"])["amount_m"]
+        .sum().reset_index()
+    )
     fig3 = px.bar(
-        monthly_by_group,
-        x="month_label", y="amount_m",
+        grp_totals_by_month, x="label", y="amount_m",
         color="expense_group",
-        color_discrete_sequence=px.colors.qualitative.Set2,
-        labels={"amount_m": "Expenses (₦M)", "month_label": "", "expense_group": ""},
+        color_discrete_sequence=px.colors.qualitative.Pastel,
+        labels={"amount_m": "₦M", "label": "", "expense_group": ""},
         barmode="stack",
     )
-    fig3.update_layout(
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        plot_bgcolor="white",
-        height=300,
-        margin=dict(t=10, b=0, l=0, r=0),
-    )
-    fig3.update_yaxes(gridcolor="#F0F0F0")
+    fig3.update_layout(**CHART_LAYOUT, height=280)
     st.plotly_chart(fig3, use_container_width=True)
 
-# ─── Detail table ─────────────────────────────────────────────────────────────
+# ─── Category breakdown table ──────────────────────────────────────────────────
 st.markdown("---")
-st.markdown("#### Transaction Detail")
-if not detail.empty:
-    display = detail.copy()
-    display["expense_amount"] = display["expense_amount"].apply(lambda x: naira(float(x)))
-    display.columns = ["Date", "Category", "Group", "Type", "Narration", "Amount"]
-    st.dataframe(display, use_container_width=True, height=400)
-else:
-    st.info("No expense data for selected period.")
+
+section_title("EXPENSE CATEGORY BREAKDOWN")
+if not by_category.empty:
+    c1, c2 = st.columns([5, 1])
+    with c2:
+        st.download_button("📥 Download CSV",
+                           by_category.to_csv(index=False),
+                           f"expenses_by_category_{start}_{end}.csv", "text/csv")
+    display_cat = by_category.copy()
+    grand = float(display_cat["amount"].sum() or 1)
+    display_cat["share"] = (display_cat["amount"] / grand * 100).round(1).apply(lambda x: f"{x}%")
+    display_cat["amount"] = display_cat["amount"].apply(lambda x: naira(float(x)))
+    display_cat["txns"]   = display_cat["txns"].apply(lambda x: count(int(x)))
+    display_cat.columns = ["Category", "Group", "Amount", "Txns", "% of Total"]
+    st.dataframe(display_cat, use_container_width=True, hide_index=True, height=300)
+
+# ─── Transaction detail ────────────────────────────────────────────────────────
+with st.expander("📄 Full Transaction Detail"):
+    # Filters
+    f1, f2 = st.columns(2)
+    with f1:
+        grp_filter = st.multiselect("Filter by Group",
+                                    detail["expense_group"].unique().tolist(),
+                                    key="grp_f")
+    with f2:
+        type_filter = st.multiselect("Filter by Type",
+                                     detail["expense_type"].unique().tolist(),
+                                     key="typ_f")
+
+    filtered = detail.copy()
+    if grp_filter:  filtered = filtered[filtered["expense_group"].isin(grp_filter)]
+    if type_filter: filtered = filtered[filtered["expense_type"].isin(type_filter)]
+
+    c1, c2 = st.columns([5, 1])
+    with c2:
+        st.download_button("📥 Download CSV",
+                           filtered.to_csv(index=False),
+                           f"expense_detail_{start}_{end}.csv", "text/csv")
+    disp = filtered.copy()
+    disp["expense_amount"] = disp["expense_amount"].apply(lambda x: naira(float(x)))
+    disp.columns = ["Date", "Category", "Group", "Type", "Narration", "Amount"]
+    st.dataframe(disp, use_container_width=True, hide_index=True, height=400)
