@@ -60,10 +60,13 @@ def sidebar_filters(extra_filters: bool = False):
             )
 
         st.markdown("---")
+        refresh_time = dt.datetime.now().strftime("%d %b %Y, %H:%M")
         st.markdown(
             f"<div style='font-size:11px;color:#94A3B8;'>"
-            f"📅 <b>{start.strftime('%d %b %Y')}</b> → <b>{end.strftime('%d %b %Y')}</b><br>"
-            f"⟳ Data refreshes hourly</div>",
+            f"📅 <b>{start.strftime('%d %b %Y')}</b> → <b>{end.strftime('%d %b %Y')}</b><br><br>"
+            f"🕐 <b style='color:#CBD5E1;'>Last refreshed</b><br>"
+            f"<span style='color:#E2E8F0;font-weight:600;'>{refresh_time}</span><br>"
+            f"<span style='color:#64748B;'>⟳ Refreshes hourly</span></div>",
             unsafe_allow_html=True,
         )
 

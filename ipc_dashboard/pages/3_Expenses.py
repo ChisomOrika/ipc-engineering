@@ -20,24 +20,30 @@ page_header("Cost Management & Expenses",
             f"{period_label} · Lenco Bank Debits")
 
 # ─── Queries ──────────────────────────────────────────────────────────────────
-def _exp_kpi(s, e):
-    return run_query(f"""
+# Master KPI query — replaces 3 separate round-trips
+exp_kpi = run_query(f"""
+    WITH exp AS (
         SELECT
-            SUM(expense_amount)                                                AS total,
-            SUM(CASE WHEN expense_type='Fixed'    THEN expense_amount ELSE 0 END) AS fixed,
-            SUM(CASE WHEN expense_type='Variable' THEN expense_amount ELSE 0 END) AS variable,
-            COUNT(*) AS txn_count
+            SUM(CASE WHEN expense_date BETWEEN '{start}' AND '{end}'
+                     THEN expense_amount END)                                      AS total,
+            SUM(CASE WHEN expense_date BETWEEN '{start}' AND '{end}'
+                     AND expense_type='Fixed' THEN expense_amount END)             AS fixed,
+            SUM(CASE WHEN expense_date BETWEEN '{start}' AND '{end}'
+                     AND expense_type='Variable' THEN expense_amount END)          AS variable,
+            COUNT(CASE WHEN expense_date BETWEEN '{start}' AND '{end}'
+                       THEN 1 END)                                                 AS txn_count,
+            SUM(CASE WHEN expense_date BETWEEN '{prev_start}' AND '{prev_end}'
+                     THEN expense_amount END)                                      AS prev_total
         FROM gold.fact_expenses
-        WHERE expense_date BETWEEN '{s}' AND '{e}'
-    """)
-
-curr_kpi = _exp_kpi(start, end)
-prev_kpi = _exp_kpi(prev_start, prev_end)
-
-curr_rev = run_query(f"""
-    SELECT SUM(revenue_amount) AS revenue
-    FROM gold.fact_revenue
-    WHERE revenue_order_date BETWEEN '{start}' AND '{end}'
+        WHERE expense_date BETWEEN '{prev_start}' AND '{end}'
+    ),
+    rev AS (
+        SELECT SUM(revenue_amount) AS revenue
+        FROM gold.fact_revenue
+        WHERE revenue_order_date BETWEEN '{start}' AND '{end}'
+    )
+    SELECT exp.total, exp.fixed, exp.variable, exp.txn_count, exp.prev_total, rev.revenue
+    FROM exp, rev
 """)
 
 by_group = run_query(f"""
@@ -97,12 +103,12 @@ def _v(df, col, default=0):
     return float(df.iloc[0][col])
 def _d(c, p): return ((c-p)/p*100) if p and p > 0 else None
 
-total_exp  = _v(curr_kpi, "total")
-prev_total = _v(prev_kpi, "total")
-fixed_exp  = _v(curr_kpi, "fixed")
-var_exp    = _v(curr_kpi, "variable")
-txn_count  = int(_v(curr_kpi, "txn_count"))
-revenue    = _v(curr_rev, "revenue")
+total_exp  = _v(exp_kpi, "total")
+prev_total = _v(exp_kpi, "prev_total")
+fixed_exp  = _v(exp_kpi, "fixed")
+var_exp    = _v(exp_kpi, "variable")
+txn_count  = int(_v(exp_kpi, "txn_count"))
+revenue    = _v(exp_kpi, "revenue")
 exp_ratio  = (total_exp / revenue * 100) if revenue > 0 else 0
 fixed_pct  = (fixed_exp / total_exp * 100) if total_exp > 0 else 0
 top_group  = by_group.iloc[0]["expense_group"] if not by_group.empty else "—"
@@ -148,12 +154,7 @@ with left:
 
 with right:
     section_title("FIXED vs VARIABLE SPLIT")
-    type_data = run_query(f"""
-        SELECT expense_type, SUM(expense_amount) AS amount
-        FROM gold.fact_expenses
-        WHERE expense_date BETWEEN '{start}' AND '{end}'
-        GROUP BY expense_type
-    """)
+    type_data = by_group.groupby("expense_type")["amount"].sum().reset_index()
     if not type_data.empty:
         fig2 = go.Figure(go.Pie(
             labels=type_data["expense_type"],
