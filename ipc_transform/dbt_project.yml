@@ -1,0 +1,43 @@
+
+# Name your project! Project names should contain only lowercase characters
+# and underscores. A good package name should reflect your organization's
+# name or the intended use of these models
+name: 'dash_transform'
+version: '1.0.0'
+config-version: 2
+
+# This setting configures which "profile" dbt uses for this project.
+profile: 'dash_transform'
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  dash_transform:
+    rv:
+      +materialized: table
+      +database: PROD_ANALYTICS_DB
+      dash:
+        +schema: rv_dash
+      gosource:
+        +schema: rv_gosource
+      lenco:
+        +schema: rv_lenco
+      paystack:
+        +schema: rv_paystack
+    bv:
+      +materialized: table
+      +database: PROD_ANALYTICS_DB
+      +schema: bv
+    gold:
+      +materialized: table
+      +database: PROD_ANALYTICS_DB
+      +schema: gold

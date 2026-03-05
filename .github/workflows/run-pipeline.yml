@@ -1,24 +1,70 @@
-name: Run Data Pipeline
+name: IPC Incremental Ingestion
 
 on:
   schedule:
-    - cron: '0 */2 * * *'  # Every 2 hours
-  workflow_dispatch:
+    - cron: '0 6 * * *'   # 07:00 WAT (WAT = UTC+1, so 06:00 UTC)
+    - cron: '0 13 * * *'  # 14:00 WAT
+    - cron: '0 18 * * *'  # 19:00 WAT
+  workflow_dispatch:       # Allow manual trigger from GitHub UI
 
 jobs:
-  run-pipeline:
-    runs-on: self-hosted
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90   # Kill if something hangs
+
+    env:
+      PG_HOST:             ${{ secrets.PG_HOST }}
+      PG_PORT:             ${{ secrets.PG_PORT }}
+      PG_USER:             ${{ secrets.PG_USER }}
+      PG_PASSWORD:         ${{ secrets.PG_PASSWORD }}
+      NINEPAY_SECRET:      ${{ secrets.NINEPAY_SECRET }}
+      NINEPAY_API_KEY:     ${{ secrets.NINEPAY_API_KEY }}
+      PAYSTACK_SECRET_KEY: ${{ secrets.PAYSTACK_SECRET_KEY }}
+      LENCO_API_TOKEN:     ${{ secrets.LENCO_API_TOKEN }}
+      DASH_URL:            ${{ secrets.DASH_URL }}
+      GOSOURCE_URL:        ${{ secrets.GOSOURCE_URL }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Run ipc_gosource scheduler
-        run: |
-          cd ipc_gosource
-          python3 scheduler.py
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-      - name: Run ipc_dash scheduler
+      - name: Install dependencies
         run: |
-          cd ipc_dash
-          python3 scheduler.py
+          pip install psycopg2-binary pymongo pandas python-dotenv requests urllib3 dbt-postgres
+
+      - name: DAASH ingestion
+        run: python ipc_ingestion/dash_incremental_load.py
+
+      - name: GoSource ingestion
+        run: python ipc_ingestion/gosource_incremental_load.py
+
+      - name: Lenco ingestion
+        run: python ipc_ingestion/lenco_incremental_load.py
+
+      - name: Paystack ingestion
+        run: python ipc_ingestion/paystack_incremental_load.py
+
+      - name: 9japay ingestion
+        run: python ipc_ingestion/9jaypay_incremental_load.py
+
+      - name: Run dbt transformations
+        run: |
+          cd ipc_transform
+          dbt run --profiles-dir .
+
+      - name: Notify Slack on failure
+        if: failure()
+        uses: slackapi/slack-github-action@v1.27.0
+        with:
+          payload: |
+            {
+              "text": ":red_circle: *IPC Ingestion Failed*\n*Run:* ${{ github.run_number }}\n*Triggered:* ${{ github.event_name }}\n*Logs:* ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
