@@ -20,7 +20,7 @@ def get_engine():
     return create_engine(url, pool_pre_ping=True)
 
 
-@st.cache_data(ttl=3600, show_spinner="Loading…")
+@st.cache_data(ttl=21600, show_spinner="Loading…")
 def run_query(sql: str) -> pd.DataFrame:
     with get_engine().connect() as conn:
         return pd.read_sql(text(sql), conn)

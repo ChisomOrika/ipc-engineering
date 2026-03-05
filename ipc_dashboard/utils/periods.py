@@ -66,7 +66,7 @@ def sidebar_filters(extra_filters: bool = False):
             f"📅 <b>{start.strftime('%d %b %Y')}</b> → <b>{end.strftime('%d %b %Y')}</b><br><br>"
             f"🕐 <b style='color:#CBD5E1;'>Last refreshed</b><br>"
             f"<span style='color:#E2E8F0;font-weight:600;'>{refresh_time}</span><br>"
-            f"<span style='color:#64748B;'>⟳ Refreshes hourly</span></div>",
+            f"<span style='color:#64748B;'>⟳ Refreshes every 6 hours</span></div>",
             unsafe_allow_html=True,
         )
 
