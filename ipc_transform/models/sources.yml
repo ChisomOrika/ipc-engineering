@@ -1,0 +1,97 @@
+version: 2
+
+sources:
+  - name: lenco_main
+    database: PROD_ANALYTICS_DB
+    schema: raw_lenco
+    tables:
+      - name: accounts
+        description: "Lenco bank accounts."
+      - name: recipients
+        description: "Saved transfer recipients."
+      - name: transactions
+        description: "All debit/credit transactions with narration category."
+      - name: virtual_accounts
+        description: "Virtual accounts issued to customers."
+      - name: virtual_account_transactions
+        description: "Transactions on virtual accounts."
+      - name: bills
+        description: "Bill payments (airtime, utilities, etc)."
+      - name: pos_terminals
+        description: "POS terminal inventory."
+      - name: pos_transactions
+        description: "Transactions processed on POS terminals."
+
+  - name: paystack_main
+    database: PROD_ANALYTICS_DB
+    schema: raw_paystack
+    tables:
+      - name: transactions
+        description: "Paystack payment transactions."
+
+  - name: dash_main
+    database: PROD_ANALYTICS_DB
+    schema: raw_dash
+    tables:
+      - name: branches
+        description: "Source table containing branch information."
+      - name: orders
+        description: "Source table containing order details."
+      - name: menucategories
+        description: "Source table containing menu categories."
+      - name: customers
+        description: "Source table containing customer information."
+      - name: products
+        description: "Source table containing product details."
+      - name: discounts
+        description: "Source table containing different kinds of discounts."
+      - name: users
+        description: "Source table containing different kinds of users."
+      - name: revenueledgers
+        description: "Source table containing revenue breakdown."
+      - name: wallets
+        description: "Source table containing wallets breakdown."
+      - name: subscriptions
+        description: "Source table containing subscription details."
+      - name: deliveries
+        description: "Source table containing delivery information."
+      - name: members
+        description: "Source table containing member details."
+      - name: menuitems
+        description: "Source table containing menu item details."
+      - name: productcategories
+        description: "Source table containing product categories."
+      - name: refunds
+        description: "Source table containing refund transactions."
+      - name: relaytransactions
+        description: "Source table containing relay transaction details."
+      - name: relaywallets
+        description: "Source table containing relay wallet information."
+      - name: subscriptionplans
+        description: "Source table containing subscription plan details."
+      - name: taxes
+        description: "Source table containing tax information."
+      - name: taxledgers
+        description: "Source table containing tax ledger breakdown."
+      - name: taxtransactions
+        description: "Source table containing tax transaction details."
+      - name: transactions
+        description: "Source table containing transaction records."
+      - name: virtualaccounts
+        description: "Source table containing virtual account details."
+  - name: gosource_main
+    database: PROD_ANALYTICS_DB
+    schema: raw_gosource
+    tables:
+      - name: orders
+        description: "GoSource B2B procurement orders (product-level rows)."
+      - name: customers
+        description: "GoSource registered business customers."
+      - name: products
+        description: "GoSource product catalogue."
+      - name: categories
+        description: "Product categories."
+      - name: receipts
+        description: "Order receipts / fulfilment records."
+      - name: timelines
+        description: "Order status timeline events."

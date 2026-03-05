@@ -1,3 +1,15 @@
-logs/ 
-*.log 
-target/ 
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv*/
+ipc_dash/
+
+# dbt
+target/
+dbt_packages/
+logs/
+*.log
