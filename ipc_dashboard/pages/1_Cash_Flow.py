@@ -250,6 +250,8 @@ if not inflow_sources.empty:
         src_d["amount"]    = src_d["amount"].apply(lambda x: naira(float(x)))
         src_d["txn_count"] = src_d["txn_count"].apply(lambda x: count(int(x)))
         src_d.columns = ["Source", "Amount", "Txns"]
+        st.download_button("📥 Download CSV", inflow_sources.to_csv(index=False),
+                           f"inflow_sources_{start}_{end}.csv", "text/csv")
         st.dataframe(src_d, use_container_width=True, hide_index=True, height=240)
 
 st.markdown("---")
@@ -332,6 +334,10 @@ if not monthly_sl_rev.empty:
 # Top inflow narrations
 section_title("TOP INFLOW TRANSACTIONS (Period Total)")
 if not top_inflows.empty:
+    c1, c2 = st.columns([5, 1])
+    with c2:
+        st.download_button("📥 Download CSV", top_inflows.to_csv(index=False),
+                           f"top_inflows_{start}_{end}.csv", "text/csv")
     ti = top_inflows.copy()
     ti["amount"]    = ti["amount"].apply(lambda x: naira(float(x)))
     ti["txn_count"] = ti["txn_count"].apply(lambda x: count(int(x)))
@@ -367,6 +373,8 @@ with col_l:
 
 with col_r:
     if not outflow_categories.empty:
+        st.download_button("📥 Download CSV", outflow_categories.to_csv(index=False),
+                           f"outflow_categories_{start}_{end}.csv", "text/csv")
         oc = outflow_categories.copy()
         oc["amount"]    = oc["amount"].apply(lambda x: naira(float(x)))
         oc["txn_count"] = oc["txn_count"].apply(lambda x: count(int(x)))
@@ -376,6 +384,10 @@ with col_r:
 
 section_title("TOP OUTFLOW TRANSACTIONS (Period Total)")
 if not top_outflows.empty:
+    c1, c2 = st.columns([5, 1])
+    with c2:
+        st.download_button("📥 Download CSV", top_outflows.to_csv(index=False),
+                           f"top_outflows_{start}_{end}.csv", "text/csv")
     to_ = top_outflows.copy()
     to_["amount"]    = to_["amount"].apply(lambda x: naira(float(x)))
     to_["txn_count"] = to_["txn_count"].apply(lambda x: count(int(x)))

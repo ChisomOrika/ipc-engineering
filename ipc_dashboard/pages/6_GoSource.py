@@ -319,6 +319,8 @@ if not top_customers.empty:
         st.plotly_chart(fig_cust, use_container_width=True)
 
     with c2:
+        st.download_button("📥 Download CSV", top_customers.to_csv(index=False),
+                           f"gosource_top_customers_{start}_{end}.csv", "text/csv")
         display = top_customers[["customer", "orders", "rev_m", "aov"]].copy()
         display["revenue"] = display["rev_m"].apply(lambda x: naira(x * 1e6))
         display["aov"]     = display["aov"].apply(naira)
