@@ -99,7 +99,7 @@ def get_last_max_updated_at(conn, table_name, schema="raw_dash", timestamp_colum
 # ---------------------------------------------------------------------------
 
 def retrieve_new_records(mongo_uri: str, db_name: str, collection_name: str,
-                         last_updated_at=None, lookback_days: int = 2) -> pd.DataFrame:
+                         last_updated_at=None, lookback_days: int = 7) -> pd.DataFrame:
     print(f"  Connecting to MongoDB...")
     client = MongoClient(mongo_uri, 
                          serverSelectionTimeoutMS=90000,
@@ -313,7 +313,7 @@ def run_incremental_ingestion(
     pk_columns: list,
     schema: str = "raw_dash",
     timestamp_column: str = "updatedAt",
-    lookback_days: int = 2,
+    lookback_days: int = 7,
 ):
     try:
         # Get last max timestamp from Postgres
@@ -361,8 +361,11 @@ INGESTION_JOBS = [
     {"mongo_collection": "revenueledgers",    "pg_table": "revenueledgers",    "pk_columns": ["_id"]},
     {"mongo_collection": "products",          "pg_table": "products",          "pk_columns": ["_id"]},
     {"mongo_collection": "subscriptions",     "pg_table": "subscriptions",     "pk_columns": ["_id"]},
-    #{"mongo_collection": "deliveries",        "pg_table": "deliveries",        "pk_columns": ["_id"]},
-    #{"mongo_collection": "members",           "pg_table": "members",           "pk_columns": ["_id"]},
+    {"mongo_collection": "deliveries",        "pg_table": "deliveries",        "pk_columns": ["_id"]},
+    {"mongo_collection": "members",           "pg_table": "members",           "pk_columns": ["_id"]},
+    {"mongo_collection": "activitylogs",      "pg_table": "activitylogs",      "pk_columns": ["_id"]},
+    {"mongo_collection": "websitevisits",     "pg_table": "websitevisits",     "pk_columns": ["_id"]},
+    {"mongo_collection": "menuitems",         "pg_table": "menuitems",         "pk_columns": ["_id"]},
     #{"mongo_collection": "productcategories", "pg_table": "productcategories", "pk_columns": ["_id"]},
     #{"mongo_collection": "refunds",           "pg_table": "refunds",           "pk_columns": ["_id"]},
     #{"mongo_collection": "relaytransactions", "pg_table": "relaytransactions", "pk_columns": ["_id"]},
