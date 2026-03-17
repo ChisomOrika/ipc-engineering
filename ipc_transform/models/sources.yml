@@ -79,6 +79,10 @@ sources:
         description: "Source table containing transaction records."
       - name: virtualaccounts
         description: "Source table containing virtual account details."
+      - name: activitylogs
+        description: "Platform activity logs — login, menu edits, order actions per branch/customer."
+      - name: websitevisits
+        description: "Website visit counts per restaurant sub-website."
   - name: gosource_main
     database: PROD_ANALYTICS_DB
     schema: raw_gosource
