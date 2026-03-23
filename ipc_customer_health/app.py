@@ -557,7 +557,7 @@ if service == "DAASH":
             )
         st.markdown("")
 
-    no_web = health[(health.orders_last_30d > 50) & (health.web_order_pct == 0)]
+    no_web = health[(health.orders_last_30d > 50) & (health["web_order_pct"] == 0)] if "web_order_pct" in health.columns else pd.DataFrame()
     if not no_web.empty:
         alert_count += 1
         st.markdown(alert_card(
@@ -569,10 +569,13 @@ if service == "DAASH":
             st.markdown(f"&nbsp;&nbsp;&nbsp;**{r.business_name}** — {int(r.orders_last_30d)} orders, 100% POS")
         st.markdown("")
 
-    bad_quality = health[
-        (health.order_fail_rate_pct >= 5)
-        & (health.failed_orders_90d >= 3)
-    ].sort_values("order_fail_rate_pct", ascending=False)
+    if "order_fail_rate_pct" in health.columns and "failed_orders_90d" in health.columns:
+        bad_quality = health[
+            (health.order_fail_rate_pct >= 5)
+            & (health.failed_orders_90d >= 3)
+        ].sort_values("order_fail_rate_pct", ascending=False)
+    else:
+        bad_quality = pd.DataFrame()
     if not bad_quality.empty:
         alert_count += 1
         st.markdown(alert_card(
