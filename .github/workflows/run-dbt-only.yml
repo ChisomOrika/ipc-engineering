@@ -1,0 +1,32 @@
+name: dbt Transformations Only
+
+on:
+  workflow_dispatch:
+
+jobs:
+  dbt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      PG_HOST:     ${{ secrets.PG_HOST }}
+      PG_PORT:     ${{ secrets.PG_PORT }}
+      PG_USER:     ${{ secrets.PG_USER }}
+      PG_PASSWORD: ${{ secrets.PG_PASSWORD }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dbt
+        run: pip install dbt-postgres
+
+      - name: Run dbt transformations
+        run: |
+          cd ipc_transform
+          dbt run --profiles-dir .
