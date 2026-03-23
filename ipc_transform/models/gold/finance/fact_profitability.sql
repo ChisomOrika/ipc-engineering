@@ -3,16 +3,30 @@
 -- IPC Group profitability by service line
 --
 -- DAASH (marketplace model):
---   No inventory owned — profit = service charge collected per order
+--   No inventory owned — profit = service charge / platform fee per order
 --   COGS = 0 (restaurant/kitchen bears the food cost)
 --
 -- GoSource (procurement model):
---   IPC owns inventory — profit = revenue minus product cost
---   COGS = sum(actual_price × quantity) across all product lines per order
---   Service charge = IPC's explicit margin on top of product cost
+--   Revenue  = subtotal (discountPrice × qty) + service charge
+--   COGS     = subtotal (product cost passed through — supplier cost not tracked per order)
+--   GP       = service charge collected (IPC's explicit margin, applied to credit orders)
+--   Note: supplier cost per unit is not recorded in the system, so GP = service charge only
 
 -- ── DAASH ─────────────────────────────────────────────────────────────────
-with daash_orders as (
+-- Platform fee per order comes from bv_dash_revenueledgers (revenue_ledger credits),
+-- joined to orders by paystack reference. order_service_charge_amount in the orders
+-- table is largely unpopulated — the ledger is the authoritative source.
+with daash_platform_fee as (
+    select
+        revenue_ledgers_reference                                           as paystack_ref,
+        sum(revenue_ledgers_amount)                                         as platform_fee
+    from {{ ref('bv_dash_revenueledgers') }}
+    where revenue_ledgers_type = 'credit'
+      and revenue_ledgers_reference is not null
+    group by revenue_ledgers_reference
+),
+
+daash_orders as (
     select
         o.order_id_pk,
         o.order_paystack_reference                                          as order_reference,
@@ -25,68 +39,44 @@ with daash_orders as (
         coalesce(o.order_total_price_amount::numeric,    0)                 as revenue_amount,
         coalesce(o.order_subtotal_amount::numeric,       0)                 as subtotal_amount,
         coalesce(o.order_delivery_fee_amount::numeric,   0)                 as delivery_fee_amount,
-        coalesce(o.order_service_charge_amount::numeric, 0)                 as service_charge_amount,
+        -- Service charge recorded in ledger (authoritative) or fallback to order field
+        coalesce(f.platform_fee,
+                 o.order_service_charge_amount::numeric, 0)                 as service_charge_amount,
         coalesce(o.order_discount::numeric,              0)                 as discount_amount,
         0::numeric                                                          as cogs_amount,
-        -- Marketplace: profit = service charge (restaurant owns food cost)
-        coalesce(o.order_service_charge_amount::numeric, 0)                 as gross_profit_amount
+        -- GP = platform fee from revenue ledger (IPC's cut per delivered order)
+        coalesce(f.platform_fee,
+                 o.order_service_charge_amount::numeric, 0)                 as gross_profit_amount
     from {{ ref('bv_dash_orders') }} o
     left join {{ ref('bv_dash_customers') }} c
         on o.order_customer_id_fk = c.customer_id_pk
+    left join daash_platform_fee f
+        on o.order_paystack_reference = f.paystack_ref
     where lower(o.order_status) = 'delivered'
 ),
 
 -- ── GoSource ──────────────────────────────────────────────────────────────
--- Step 1: order-level revenue fields (deduplicated — source is product-level)
-gosource_revenue as (
+-- Deduplicated to order level (source table is product-level, one row per line item)
+gosource_orders as (
     select distinct on (order_id_pk)
         order_id_pk,
         order_reference,
         order_unified_customer_id_fk                                        as customer_id,
         order_business_name                                                 as customer_name,
         order_created_at_date                                               as profit_date,
-        coalesce(order_total_price_amount,    0)                            as revenue_amount,
-        coalesce(order_subtotal_amount,       0)                            as subtotal_amount,
-        coalesce(order_delivery_fee_amount,   0)                            as delivery_fee_amount,
-        coalesce(order_service_charge_amount, 0)                            as service_charge_amount,
-        coalesce(order_discount_amount,       0)                            as discount_amount
+        coalesce(nullif(order_total_price_amount,    'NaN'::numeric), 0)      as revenue_amount,
+        coalesce(nullif(order_subtotal_amount,       'NaN'::numeric), 0)    as subtotal_amount,
+        coalesce(nullif(order_delivery_fee_amount,   'NaN'::numeric), 0)    as delivery_fee_amount,
+        coalesce(nullif(order_service_charge_amount, 'NaN'::numeric), 0)    as service_charge_amount,
+        coalesce(nullif(order_discount_amount,       'NaN'::numeric), 0)    as discount_amount,
+        -- COGS = 0; supplier cost per unit not recorded in the system
+        0::numeric                                                          as cogs_amount,
+        -- GP = service charge only (IPC's explicit margin, applied on credit orders)
+        coalesce(nullif(order_service_charge_amount, 'NaN'::numeric), 0)    as gross_profit_amount
     from {{ ref('bv_gosource_orders') }}
     where lower(order_status)         = 'delivered'
       and lower(order_payment_status) = 'paid'
     order by order_id_pk, order_delivered_at_date
-),
-
--- Step 2: COGS per order — sum actual cost across all product lines
-gosource_cogs as (
-    select
-        order_id_pk,
-        sum(
-            coalesce(order_product_actual_price::numeric, 0) *
-            coalesce(order_product_quantity::numeric,     1)
-        )                                                                   as cogs_amount
-    from {{ ref('bv_gosource_orders') }}
-    where lower(order_status)         = 'delivered'
-      and lower(order_payment_status) = 'paid'
-    group by order_id_pk
-),
-
-gosource_orders as (
-    select
-        r.order_id_pk,
-        r.order_reference,
-        r.customer_id,
-        r.customer_name,
-        r.profit_date,
-        r.revenue_amount,
-        r.subtotal_amount,
-        r.delivery_fee_amount,
-        r.service_charge_amount,
-        r.discount_amount,
-        coalesce(c.cogs_amount, 0)                                          as cogs_amount,
-        -- Procurement: gross profit = what customer paid minus what IPC paid suppliers
-        r.revenue_amount - coalesce(c.cogs_amount, 0)                       as gross_profit_amount
-    from gosource_revenue r
-    left join gosource_cogs c on r.order_id_pk = c.order_id_pk
 )
 
 -- ── Final union ───────────────────────────────────────────────────────────
@@ -110,7 +100,7 @@ select
     -- Gross margin % (how much of each ₦ of revenue is profit)
     case
         when revenue_amount > 0
-        then round(gross_profit_amount / revenue_amount * 100, 2)
+        then round((gross_profit_amount / revenue_amount * 100)::numeric, 2)
         else 0
     end                                                                     as profit_gross_margin_pct
 from daash_orders
@@ -136,7 +126,7 @@ select
     gross_profit_amount                                                     as profit_gross_profit_amount,
     case
         when revenue_amount > 0
-        then round(gross_profit_amount / revenue_amount * 100, 2)
+        then round((gross_profit_amount / revenue_amount * 100)::numeric, 2)
         else 0
     end                                                                     as profit_gross_margin_pct
 from gosource_orders

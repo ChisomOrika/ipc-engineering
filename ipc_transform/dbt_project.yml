@@ -23,7 +23,7 @@ clean-targets:
 models:
   dash_transform:
     rv:
-      +materialized: table
+      +materialized: view
       +database: PROD_ANALYTICS_DB
       dash:
         +schema: rv_dash

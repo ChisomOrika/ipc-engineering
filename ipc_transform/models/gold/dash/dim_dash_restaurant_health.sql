@@ -5,22 +5,24 @@
 ) }}
 
 /*
-  Restaurant (customer) engagement health score.
-  One row per DAASH customer (restaurant business).
+  Restaurant (brand) engagement health score.
+  One row per DAASH customer (brand).
 
-  Engagement signals:
+  Engagement signals (9 for web-enabled, 7 for POS-only):
     1. Order volume  — orders in last 30d vs prior 30d
-    2. Website traffic — visit records in last 30d vs prior 30d
+    2. Website traffic — visit records in last 30d vs prior 30d  [web-only]
     3. Platform activity — activity log entries in last 30d vs prior 30d
     4. Menu freshness — days since last menu item update
     5. Staff adoption — active (non-deactivated) members count
     6. Delivery quality — % of deliveries completed vs total
-    7. Subscription status — active + auto-renew
+    7. Subscription status — active subscription
+    8. Channel adoption — any website orders in last 90d  [web-only]
+    9. Order quality — rejection/void rate below 5%
 
-  Health status:
-    'Healthy'   — 5+ signals green
-    'At Risk'   — 3-4 signals green
-    'Critical'  — 0-2 signals green
+  POS-only brands (0 website orders ever) are scored out of 7 — signals
+  2 and 8 are excluded from their denominator. Thresholds scale:
+    Web-enabled (out of 9): Healthy ≥7, At Risk ≥4, Critical <4
+    POS-only    (out of 7): Healthy ≥5, At Risk ≥3, Critical <3
 */
 
 -- Only include restaurants that have ever placed at least 1 order
@@ -32,7 +34,7 @@ WITH customers_with_orders AS (
 customers AS (
     SELECT
         c."_id"            AS customer_id,
-        c."businessName"   AS business_name,
+        {{ clean_business_name('c."businessName"') }} AS business_name,
         c."email"          AS email,
         c."verified"       AS verified,
         c."createdAt"::date AS signup_date,
@@ -41,6 +43,7 @@ customers AS (
     INNER JOIN customers_with_orders cwo ON cwo.customer_id = c."_id"
     WHERE c."businessName" IS NOT NULL
       AND TRIM(c."businessName") != ''
+      AND NOT {{ is_test_account('c."businessName"') }}
 ),
 
 -- 1. ORDER VOLUME
@@ -162,6 +165,45 @@ subscriptions AS (
     ORDER BY "customer", "updatedAt" DESC
 ),
 
+-- 8. CHANNEL ADOPTION (website usage = higher engagement)
+channel_mix AS (
+    SELECT
+        "customer"       AS customer_id,
+        COUNT(*)         AS total_orders_all,
+        COUNT(*) FILTER (WHERE "channel" = 'website') AS web_orders,
+        ROUND(COUNT(*) FILTER (WHERE "channel" = 'website')::numeric
+              / NULLIF(COUNT(*), 0) * 100, 1) AS web_pct
+    FROM raw_dash.orders
+    WHERE LOWER("status") = 'delivered'
+      AND "createdAt"::date >= CURRENT_DATE - 90
+    GROUP BY "customer"
+),
+
+-- POS-ONLY DETECTION (brands with zero website orders ever)
+pos_only AS (
+    SELECT
+        "customer"       AS customer_id,
+        CASE WHEN COALESCE(COUNT(*) FILTER (WHERE "channel" = 'website'), 0) = 0
+             THEN TRUE ELSE FALSE
+        END AS is_pos_only
+    FROM raw_dash.orders
+    WHERE LOWER("status") = 'delivered'
+    GROUP BY "customer"
+),
+
+-- 9. ORDER QUALITY (rejection/void rate)
+order_quality AS (
+    SELECT
+        "customer"       AS customer_id,
+        COUNT(*)         AS total_orders_90d,
+        COUNT(*) FILTER (WHERE LOWER("status") IN ('rejected', 'voided')) AS failed_orders_90d,
+        ROUND(COUNT(*) FILTER (WHERE LOWER("status") IN ('rejected', 'voided'))::numeric
+              / NULLIF(COUNT(*), 0) * 100, 1) AS fail_rate_pct
+    FROM raw_dash.orders
+    WHERE "createdAt"::date >= CURRENT_DATE - 90
+    GROUP BY "customer"
+),
+
 -- BRANCHES PER CUSTOMER
 branch_counts AS (
     SELECT
@@ -227,6 +269,17 @@ assembled AS (
         sub.sub_auto_renew,
         sub.sub_on_trial,
 
+        -- Channel adoption
+        COALESCE(cm.web_orders, 0)         AS web_orders_90d,
+        COALESCE(cm.web_pct, 0)            AS web_order_pct,
+
+        -- Order quality
+        COALESCE(oq.failed_orders_90d, 0)  AS failed_orders_90d,
+        COALESCE(oq.fail_rate_pct, 0)      AS order_fail_rate_pct,
+
+        -- POS-only flag
+        COALESCE(po.is_pos_only, TRUE) AS is_pos_only,
+
         -- SIGNAL SCORES (1 = healthy, 0 = at risk)
         -- Signal 1: Order volume not declining >50%
         CASE WHEN COALESCE(oc.orders_last_30d, 0) > 0
@@ -235,7 +288,7 @@ assembled AS (
              THEN 1 ELSE 0
         END AS signal_orders,
 
-        -- Signal 2: Website visits not declining >50%
+        -- Signal 2: Website visits not declining >50% (excluded for POS-only)
         CASE WHEN COALESCE(vc.visits_last_30d, 0) > 0
               AND (vp.visits_prior_30d IS NULL OR vp.visits_prior_30d = 0
                    OR vc.visits_last_30d::numeric / vp.visits_prior_30d >= 0.5)
@@ -266,7 +319,18 @@ assembled AS (
         -- Signal 7: Subscription active
         CASE WHEN sub.sub_is_active::text = 'true'
              THEN 1 ELSE 0
-        END AS signal_subscription
+        END AS signal_subscription,
+
+        -- Signal 8: Website channel adoption (any web orders in 90d)
+        CASE WHEN COALESCE(cm.web_orders, 0) > 0
+             THEN 1 ELSE 0
+        END AS signal_channel,
+
+        -- Signal 9: Low rejection/void rate (< 5%) — must have orders in 90d
+        CASE WHEN COALESCE(oq.total_orders_90d, 0) > 0
+              AND COALESCE(oq.fail_rate_pct, 0) < 5
+             THEN 1 ELSE 0
+        END AS signal_quality
 
     FROM customers c
     LEFT JOIN branch_counts br       ON br.customer_id = c.customer_id
@@ -282,25 +346,55 @@ assembled AS (
     LEFT JOIN staff st               ON st.customer_id = c.customer_id
     LEFT JOIN delivery_quality dq    ON dq.customer_id = c.customer_id
     LEFT JOIN subscriptions sub      ON sub.customer_id = c.customer_id
+    LEFT JOIN channel_mix cm         ON cm.customer_id = c.customer_id
+    LEFT JOIN pos_only po            ON po.customer_id = c.customer_id
+    LEFT JOIN order_quality oq       ON oq.customer_id = c.customer_id
 )
 
 SELECT
     *,
 
-    -- Total health score (out of 7)
-    signal_orders + signal_visits + signal_activity + signal_menu
-        + signal_staff + signal_delivery + signal_subscription
-        AS health_score,
+    -- Score max: 7 for POS-only (exclude signal_visits + signal_channel), 9 for web-enabled
+    CASE WHEN is_pos_only THEN 7 ELSE 9 END AS score_max,
 
-    -- Health status
+    -- Total health score — POS-only brands: exclude signal_visits and signal_channel
+    CASE WHEN is_pos_only
+         THEN signal_orders + signal_activity + signal_menu
+              + signal_staff + signal_delivery + signal_subscription
+              + signal_quality
+         ELSE signal_orders + signal_visits + signal_activity + signal_menu
+              + signal_staff + signal_delivery + signal_subscription
+              + signal_channel + signal_quality
+    END AS health_score,
+
+    -- Health status (proportional thresholds)
+    -- Web-enabled (9): Healthy ≥7, At Risk ≥4
+    -- POS-only   (7): Healthy ≥5, At Risk ≥3
     CASE
-        WHEN signal_orders + signal_visits + signal_activity + signal_menu
-             + signal_staff + signal_delivery + signal_subscription >= 5
-        THEN 'Healthy'
-        WHEN signal_orders + signal_visits + signal_activity + signal_menu
-             + signal_staff + signal_delivery + signal_subscription >= 3
-        THEN 'At Risk'
-        ELSE 'Critical'
+        WHEN is_pos_only THEN
+            CASE
+                WHEN signal_orders + signal_activity + signal_menu
+                     + signal_staff + signal_delivery + signal_subscription
+                     + signal_quality >= 5
+                THEN 'Healthy'
+                WHEN signal_orders + signal_activity + signal_menu
+                     + signal_staff + signal_delivery + signal_subscription
+                     + signal_quality >= 3
+                THEN 'At Risk'
+                ELSE 'Critical'
+            END
+        ELSE
+            CASE
+                WHEN signal_orders + signal_visits + signal_activity + signal_menu
+                     + signal_staff + signal_delivery + signal_subscription
+                     + signal_channel + signal_quality >= 7
+                THEN 'Healthy'
+                WHEN signal_orders + signal_visits + signal_activity + signal_menu
+                     + signal_staff + signal_delivery + signal_subscription
+                     + signal_channel + signal_quality >= 4
+                THEN 'At Risk'
+                ELSE 'Critical'
+            END
     END AS health_status,
 
     -- Order volume change %

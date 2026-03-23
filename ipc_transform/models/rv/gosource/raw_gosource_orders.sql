@@ -1,4 +1,4 @@
-{{ config(materialized='table') }}  -- This can be adjusted as needed (table, view, etc.)
+{{ config(materialized='view') }}  -- This can be adjusted as needed (table, view, etc.)
 
 with raw_orders as (
     select * 
