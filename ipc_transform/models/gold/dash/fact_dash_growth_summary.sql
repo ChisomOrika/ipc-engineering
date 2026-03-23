@@ -6,9 +6,14 @@
 
 /*
   Weekly growth summary — new brands, churned, reactivated, net growth.
-  One row per week (Monday-based).
-  Also tracks adoption metrics: POS-only vs web-enabled, platform logins.
+  One row per week (Sunday-based: Sun → Sat).
+  Also tracks adoption metrics: POS-only vs web-enabled.
+
+  Week start = Sunday. To convert Postgres Monday-based DATE_TRUNC:
+    Sunday week start = DATE_TRUNC('week', date + 1)::date - 1
 */
+
+{% set week_trunc %}(DATE_TRUNC('week', {{caller()}} + 1)::date - 1){% endset %}
 
 WITH brand_signup AS (
     SELECT
@@ -22,11 +27,11 @@ WITH brand_signup AS (
     GROUP BY {{ clean_business_name('c."businessName"') }}
 ),
 
--- Generate weekly buckets
+-- Generate weekly buckets (Sunday-based)
 weeks AS (
     SELECT generate_series(
-        DATE_TRUNC('week', (SELECT MIN(signup_date) FROM brand_signup))::date,
-        DATE_TRUNC('week', CURRENT_DATE)::date,
+        (DATE_TRUNC('week', (SELECT MIN(signup_date) FROM brand_signup) + 1)::date - 1),
+        (DATE_TRUNC('week', CURRENT_DATE + 1)::date - 1),
         '1 week'::interval
     )::date AS week_start
 ),
@@ -34,24 +39,24 @@ weeks AS (
 -- New brands per week (first signup falls in this week)
 new_brands AS (
     SELECT
-        DATE_TRUNC('week', signup_date)::date AS week_start,
+        (DATE_TRUNC('week', signup_date + 1)::date - 1) AS week_start,
         COUNT(*) AS new_brand_count
     FROM brand_signup
-    GROUP BY DATE_TRUNC('week', signup_date)::date
+    GROUP BY (DATE_TRUNC('week', signup_date + 1)::date - 1)
 ),
 
 -- Brand order activity per week
 brand_weekly_orders AS (
     SELECT
         bs.business_name,
-        DATE_TRUNC('week', o."createdAt"::date)::date AS week_start,
+        (DATE_TRUNC('week', o."createdAt"::date + 1)::date - 1) AS week_start,
         COUNT(*) AS order_count,
         COUNT(*) FILTER (WHERE o."channel" = 'website') AS web_orders
     FROM raw_dash.orders o
     INNER JOIN raw_dash.customers c ON c."_id" = o."customer"
     INNER JOIN brand_signup bs ON bs.business_name = {{ clean_business_name('c."businessName"') }}
     WHERE LOWER(o."status") = 'delivered'
-    GROUP BY bs.business_name, DATE_TRUNC('week', o."createdAt"::date)::date
+    GROUP BY bs.business_name, (DATE_TRUNC('week', o."createdAt"::date + 1)::date - 1)
 ),
 
 -- Active brands per week (had at least 1 order)
@@ -77,7 +82,7 @@ churned_per_week AS (
         w.week_start,
         COUNT(*) AS churned_brands
     FROM weeks w
-    INNER JOIN brand_week_pairs prev ON prev.week_start = w.week_start - INTERVAL '1 week'
+    INNER JOIN brand_week_pairs prev ON prev.week_start = w.week_start - 7
     LEFT JOIN brand_week_pairs curr ON curr.business_name = prev.business_name AND curr.week_start = w.week_start
     WHERE curr.business_name IS NULL
     GROUP BY w.week_start
@@ -90,19 +95,20 @@ reactivated_per_week AS (
         COUNT(*) AS reactivated_brands
     FROM weeks w
     INNER JOIN brand_week_pairs curr ON curr.week_start = w.week_start
-    LEFT JOIN brand_week_pairs prev ON prev.business_name = curr.business_name AND prev.week_start = w.week_start - INTERVAL '1 week'
+    LEFT JOIN brand_week_pairs prev ON prev.business_name = curr.business_name AND prev.week_start = w.week_start - 7
     WHERE prev.business_name IS NULL
       -- Must have been active in some earlier week (not brand new this week)
       AND EXISTS (
           SELECT 1 FROM brand_week_pairs older
           WHERE older.business_name = curr.business_name
-            AND older.week_start < w.week_start - INTERVAL '1 week'
+            AND older.week_start < w.week_start - 7
       )
     GROUP BY w.week_start
 )
 
 SELECT
     w.week_start,
+    w.week_start + 6 AS week_end,
     COALESCE(nb.new_brand_count, 0)       AS new_brands,
     COALESCE(ap.active_brands, 0)         AS active_brands,
     COALESCE(ch.churned_brands, 0)        AS churned_brands,

@@ -55,7 +55,7 @@ page_header(
 
 growth   = run_query("SELECT * FROM gold.fact_dash_growth_summary ORDER BY week_start")
 cohorts  = run_query("SELECT * FROM gold.fact_dash_retention_cohorts ORDER BY cohort_month")
-churn    = run_query("SELECT * FROM gold.fact_dash_churn_weekly ORDER BY revenue_prior_30d DESC NULLS LAST")
+churn    = run_query("SELECT * FROM gold.fact_dash_churn_weekly ORDER BY revenue_last_week DESC NULLS LAST")
 
 if growth.empty:
     st.warning("No growth data available. Run dbt models first.")
@@ -66,10 +66,13 @@ if growth.empty:
 # 1. THIS WEEK'S SNAPSHOT
 # ═══════════════════════════════════════════════════════════════════════════════
 
-section_title("THIS WEEK")
-
 latest = growth.iloc[-1]
 prev   = growth.iloc[-2] if len(growth) > 1 else latest
+
+# Show date range
+week_start_str = pd.to_datetime(latest.week_start).strftime("%b %d")
+week_end_str = pd.to_datetime(latest.week_end).strftime("%b %d, %Y") if "week_end" in growth.columns else ""
+section_title(f"THIS WEEK · {week_start_str} – {week_end_str} (Sun – Sat)")
 
 churned_this_week = churn[churn.weekly_status == "Churned"]
 reactivated_this_week = churn[churn.weekly_status == "Reactivated"]
@@ -90,7 +93,7 @@ k6.metric("Web Adoption", f"{latest.web_adoption_pct:.0f}%",
 st.markdown("")
 
 # New brands this week — name them
-new_this_week = churn[(churn.weekly_status == "Active") & (churn.orders_prior_30d == 0)]
+new_this_week = churn[(churn.weekly_status == "Active") & (churn.orders_last_week == 0)]
 if not new_this_week.empty:
     st.markdown(
         f'<div style="background:#F0FDF4;border:1px solid #BBF7D0;border-radius:12px;'
@@ -113,7 +116,7 @@ if not churned_this_week.empty:
         f'Churned this week</div>'
         f'<div style="font-size:13px;color:#991B1BDD;">'
         + '<br>'.join(
-            f"&bull; <b>{r.business_name}</b> — {int(r.orders_prior_30d)} orders prior, "
+            f"&bull; <b>{r.business_name}</b> — {int(r.orders_last_week)} orders last week, "
             f"last order {int(r.days_since_last_order)}d ago"
             for _, r in churned_this_week.iterrows())
         + '</div></div>',
@@ -295,8 +298,8 @@ st.markdown("---")
 section_title("CHURNED THIS WEEK")
 st.markdown(
     '<div style="font-size:12px;color:#64748B;margin-bottom:12px;">'
-    'Brands that had orders in the prior 30 days but zero orders this week. '
-    'Sorted by prior revenue — highest value losses first.</div>',
+    'Brands that had orders last week (Sun–Sat) but zero orders this week. '
+    'Sorted by last week\'s revenue — highest value losses first.</div>',
     unsafe_allow_html=True,
 )
 
@@ -307,18 +310,18 @@ if not churned_this_week.empty:
         f'<div style="font-weight:700;color:#991B1B;font-size:14px;">'
         f'{len(churned_this_week)} brands stopped ordering this week</div>'
         f'<div style="font-size:13px;color:#991B1BDD;margin-top:4px;">'
-        f'Combined prior-30d revenue: {naira(churned_this_week.revenue_prior_30d.sum())}</div>'
+        f'Combined last week revenue: {naira(churned_this_week.revenue_last_week.sum())}</div>'
         f'</div>',
         unsafe_allow_html=True,
     )
 
     churn_tbl = churned_this_week[[
-        "business_name", "orders_prior_30d", "revenue_prior_30d",
+        "business_name", "orders_last_week", "revenue_last_week",
         "last_order_date", "days_since_last_order"
     ]].copy()
-    churn_tbl.columns = ["Brand", "Orders (Prior 30d)", "Revenue (Prior 30d)",
+    churn_tbl.columns = ["Brand", "Orders (Last Week)", "Revenue (Last Week)",
                          "Last Order", "Days Since"]
-    churn_tbl["Revenue (Prior 30d)"] = churn_tbl["Revenue (Prior 30d)"].apply(
+    churn_tbl["Revenue (Last Week)"] = churn_tbl["Revenue (Last Week)"].apply(
         lambda x: naira(x) if pd.notna(x) else "—"
     )
 
