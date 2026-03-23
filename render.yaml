@@ -39,9 +39,8 @@ services:
     name: ipc-ops-dashboard
     env: python
     plan: starter
-    rootDir: ipc_ops_dashboard
-    buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    buildCommand: pip install -r ipc_ops_dashboard/requirements.txt
+    startCommand: streamlit run ipc_ops_dashboard/app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
     envVars:
       - key: PG_HOST
         sync: false
