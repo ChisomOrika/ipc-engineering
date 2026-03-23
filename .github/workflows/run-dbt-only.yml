@@ -2,6 +2,11 @@ name: dbt Transformations Only
 
 on:
   workflow_dispatch:
+    inputs:
+      models:
+        description: 'dbt model selector (e.g. fact_dash_churn_weekly fact_dash_growth_summary). Leave blank for all.'
+        required: false
+        default: ''
 
 jobs:
   dbt:
@@ -29,4 +34,8 @@ jobs:
       - name: Run dbt transformations
         run: |
           cd ipc_transform
-          dbt run --profiles-dir .
+          if [ -z "${{ github.event.inputs.models }}" ]; then
+            dbt run --profiles-dir .
+          else
+            dbt run --profiles-dir . --select ${{ github.event.inputs.models }}
+          fi
