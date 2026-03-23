@@ -1,0 +1,9 @@
+[[pages]]
+name = "Health Scores"
+path = "app.py"
+icon = "💊"
+
+[[pages]]
+name = "Growth & Retention"
+path = "pages/2_Growth & Retention.py"
+icon = "📈"
