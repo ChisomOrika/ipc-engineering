@@ -392,7 +392,8 @@ st.markdown(
     'Rows are color-coded: '
     '<span style="background:#F0FDF4;padding:1px 6px;border-radius:4px;">green</span> healthy, '
     '<span style="background:#FFFBEB;padding:1px 6px;border-radius:4px;">yellow</span> at risk, '
-    '<span style="background:#FEF2F2;padding:1px 6px;border-radius:4px;">red</span> critical.</div>',
+    '<span style="background:#FEF2F2;padding:1px 6px;border-radius:4px;">red</span> critical. '
+    '<b>Conv %</b> = website conversion rate (orders ÷ visits).</div>',
     unsafe_allow_html=True,
 )
 
@@ -405,11 +406,13 @@ if service == "DAASH":
         )
     display_cols = {
         "business_name": "Restaurant", "health_score": "Score",
-        "health_status": "Status", "orders_last_30d": "Orders 30d",
+        "health_status": "Status",
+        "orders_last_30d": "Orders 30d",
+        "visits_last_30d": "Visits 30d",
+        "conversion_rate": "Conv %",
         "days_since_last_order": "Days Inactive",
         "web_order_pct": "Web %", "order_fail_rate_pct": "Fail %",
-        "active_members": "Staff", "visits_last_30d": "Visits 30d",
-        "conversion_rate": "Conv %",
+        "active_members": "Staff",
     }
 else:
     display_cols = {
