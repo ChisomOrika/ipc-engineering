@@ -544,20 +544,15 @@ if brand_pos_only:
 # Key metrics
 st.markdown("")
 if service == "DAASH":
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("Orders (30d)", count(row.get("orders_last_30d", 0)),
               help="Delivered orders in the last 30 days")
-    visits = row.get("visits_last_30d", 0) or 0
-    orders = row.get("orders_last_30d", 0) or 0
-    conv = round(orders / visits * 100, 1) if visits > 0 else 0
-    m2.metric("Visits (30d)", count(visits),
-              help="Website visits in the last 30 days")
-    m3.metric("Conversion Rate", f"{conv}%",
-              help="Orders / Website visits — how many visitors become buyers")
-    m4.metric("Fail Rate", pct(row.get("order_fail_rate_pct", 0)),
+    m2.metric("Web Order %", pct(row.get("web_order_pct", 0)),
+              help="% of orders via website vs POS")
+    m3.metric("Fail Rate", pct(row.get("order_fail_rate_pct", 0)),
               help="Rejection + void rate, last 90 days")
     days_val = row.get("days_since_last_order")
-    m5.metric("Days Inactive", int(days_val) if pd.notna(days_val) else "—",
+    m4.metric("Days Inactive", int(days_val) if pd.notna(days_val) else "—",
               help="Days since last delivered order")
 else:
     m1, m2, m3, m4 = st.columns(4)
