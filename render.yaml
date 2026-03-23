@@ -2,12 +2,12 @@ services:
   - type: web
     name: ipc-finance-dashboard
     env: python
-    plan: starter          # $7/month — keeps the app always-on (no sleep)
+    plan: starter
     buildCommand: pip install -r ipc_dashboard/requirements.txt
     startCommand: streamlit run ipc_dashboard/app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
     envVars:
       - key: PG_HOST
-        sync: false        # You will paste this in Render dashboard
+        sync: false
       - key: PG_PORT
         sync: false
       - key: PG_USER
@@ -16,3 +16,42 @@ services:
         sync: false
       - key: PG_DB
         value: PROD_ANALYTICS_DB
+
+  - type: web
+    name: ipc-customer-health
+    env: python
+    plan: starter
+    buildCommand: pip install -r ipc_customer_health/requirements.txt
+    startCommand: streamlit run ipc_customer_health/app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: PG_HOST
+        sync: false
+      - key: PG_PORT
+        sync: false
+      - key: PG_USER
+        sync: false
+      - key: PG_PASSWORD
+        sync: false
+      - key: PG_DB
+        value: PROD_ANALYTICS_DB
+
+  - type: web
+    name: ipc-ops-dashboard
+    env: python
+    plan: starter
+    rootDir: ipc_ops_dashboard
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: PG_HOST
+        sync: false
+      - key: PG_PORT
+        sync: false
+      - key: PG_USER
+        sync: false
+      - key: PG_PASSWORD
+        sync: false
+      - key: PG_DB
+        value: PROD_ANALYTICS_DB
+      - key: DASHBOARD_PASSWORD
+        sync: false
