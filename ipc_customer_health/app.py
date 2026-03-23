@@ -423,6 +423,18 @@ for c in int_cols:
     if c in tbl.columns:
         tbl[c] = tbl[c].fillna(0).astype(int)
 
+# Format numbers with commas for readability
+comma_cols = ["Orders 30d", "Visits 30d"]
+for c in comma_cols:
+    if c in tbl.columns:
+        tbl[c] = tbl[c].apply(lambda x: f"{x:,}")
+
+# Format percentage columns with 1 decimal
+pct_cols = ["Web %", "Fail %", "Pay Rate %"]
+for c in pct_cols:
+    if c in tbl.columns:
+        tbl[c] = tbl[c].fillna(0).apply(lambda x: f"{float(x):.1f}%")
+
 if "Overdue 90d+" in tbl.columns:
     tbl["Overdue 90d+"] = tbl["Overdue 90d+"].apply(
         lambda x: naira(x) if pd.notna(x) and x > 0 else "—"
