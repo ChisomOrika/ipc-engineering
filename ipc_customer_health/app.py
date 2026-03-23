@@ -417,6 +417,12 @@ avail = {k: v for k, v in display_cols.items() if k in health.columns}
 tbl = health[list(avail.keys())].copy()
 tbl.columns = list(avail.values())
 
+# Fix float display for integer columns (NULLs cause pandas to use float)
+int_cols = ["Days Inactive", "Orders 30d", "Staff", "Visits 30d", "Score", "Branches"]
+for c in int_cols:
+    if c in tbl.columns:
+        tbl[c] = tbl[c].fillna(0).astype(int)
+
 if "Overdue 90d+" in tbl.columns:
     tbl["Overdue 90d+"] = tbl["Overdue 90d+"].apply(
         lambda x: naira(x) if pd.notna(x) and x > 0 else "—"
