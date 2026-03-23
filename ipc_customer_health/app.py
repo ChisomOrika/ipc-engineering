@@ -29,16 +29,33 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.markdown("<div style='max-width:400px;margin:120px auto;'>", unsafe_allow_html=True)
-    st.markdown("### IPC Customer Health")
-    pwd = st.text_input("Password", type="password", placeholder="Enter password")
-    if st.button("Sign in", use_container_width=True):
-        if pwd == DASHBOARD_PASSWORD:
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("Incorrect password")
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <style>
+            [data-testid="stSidebar"] { display: none; }
+            header { display: none; }
+        </style>
+        <div style="max-width:380px;margin:100px auto;text-align:center;">
+            <div style="font-size:48px;margin-bottom:12px;">💊</div>
+            <div style="font-size:22px;font-weight:700;color:#0F172A;margin-bottom:4px;">
+                Customer Health
+            </div>
+            <div style="font-size:13px;color:#64748B;margin-bottom:32px;">
+                IPC Analytics
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    col1, col2, col3 = st.columns([1.2, 1, 1.2])
+    with col2:
+        pwd = st.text_input("Password", type="password", placeholder="Enter password", label_visibility="collapsed")
+        if st.button("Sign in", use_container_width=True, type="primary"):
+            if pwd == DASHBOARD_PASSWORD:
+                st.session_state.authenticated = True
+                st.rerun()
+            else:
+                st.error("Incorrect password")
     st.stop()
 
 inject_css()
