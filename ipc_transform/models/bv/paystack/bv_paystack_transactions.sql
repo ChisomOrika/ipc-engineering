@@ -1,4 +1,4 @@
-{{ config(materialized='table', schema='bv', tags=['Paystack']) }}
+{{ config(materialized='view', schema='bv', tags=['Paystack']) }}
 
 with bv_transactions as (
     select

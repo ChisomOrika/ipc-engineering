@@ -1,4 +1,4 @@
-{{ config(materialized='table',schema = 'bv',tags=['GoSource']) }}
+{{ config(materialized='view',schema = 'bv',tags=['GoSource']) }}
 
 with raw_customers as (
     select * 

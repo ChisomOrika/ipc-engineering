@@ -1,4 +1,4 @@
-{{ config(materialized='table',schema = 'bv',tags=['DAASH']) }}
+{{ config(materialized='view',schema = 'bv',tags=['DAASH']) }}
 
 with raw_branches as (
     select * 

@@ -1,4 +1,4 @@
-{{ config(materialized='table', schema='bv', tags=['Lenco']) }}
+{{ config(materialized='view', schema='bv', tags=['Lenco']) }}
 
 with bv_accounts as (
     select

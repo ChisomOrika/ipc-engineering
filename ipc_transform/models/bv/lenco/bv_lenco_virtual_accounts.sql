@@ -1,4 +1,4 @@
-{{ config(materialized='table', schema='bv', tags=['Lenco'], enabled=false) }}
+{{ config(materialized='view', schema='bv', tags=['Lenco'], enabled=false) }}
 
 with bv_virtual_accounts as (
     select
