@@ -21,6 +21,26 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+import os
+DASHBOARD_PASSWORD = os.environ.get("DASHBOARD_PASSWORD", "ipc2026")
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.markdown("<div style='max-width:400px;margin:120px auto;'>", unsafe_allow_html=True)
+    st.markdown("### IPC Customer Health")
+    pwd = st.text_input("Password", type="password", placeholder="Enter password")
+    if st.button("Sign in", use_container_width=True):
+        if pwd == DASHBOARD_PASSWORD:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Incorrect password")
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
+
 inject_css()
 
 
