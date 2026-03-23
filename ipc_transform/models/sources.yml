@@ -99,3 +99,19 @@ sources:
         description: "Order receipts / fulfilment records."
       - name: timelines
         description: "Order status timeline events."
+      - name: activitylogs
+        description: "Platform activity logs — actions, logins per business."
+      - name: branches
+        description: "Business branch locations and status."
+      - name: employees
+        description: "Staff members per business branch."
+      - name: employeeinvites
+        description: "Pending employee invitations."
+      - name: inventorymovements
+        description: "Inventory stock movements per product/branch."
+      - name: purchaseorders
+        description: "Internal purchase orders from businesses."
+      - name: requests
+        description: "Branch-level order requests."
+      - name: wallets
+        description: "Customer wallet accounts and balances."
