@@ -13,8 +13,6 @@
     Sunday week start = DATE_TRUNC('week', date + 1)::date - 1
 */
 
-{% set week_trunc %}(DATE_TRUNC('week', {{caller()}} + 1)::date - 1){% endset %}
-
 WITH brand_signup AS (
     SELECT
         {{ clean_business_name('c."businessName"') }} AS business_name,
