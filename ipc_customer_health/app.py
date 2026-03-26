@@ -401,7 +401,7 @@ if service == "DAASH":
     # Add conversion rate (orders / visits) if both columns exist
     if "visits_last_30d" in health.columns and "orders_last_30d" in health.columns:
         health["conversion_rate"] = health.apply(
-            lambda r: round(r["orders_last_30d"] / r["visits_last_30d"] * 100, 1)
+            lambda r: round(r["orders_last_30d"] / r["visits_last_30d"] * 100, 2)
             if r["visits_last_30d"] and r["visits_last_30d"] > 0 else 0, axis=1
         )
     display_cols = {
@@ -444,6 +444,9 @@ pct_cols = ["Web %", "Fail %", "Pay Rate %"]
 for c in pct_cols:
     if c in tbl.columns:
         tbl[c] = tbl[c].fillna(0).apply(lambda x: f"{float(x):.1f}%")
+
+if "Conv %" in tbl.columns:
+    tbl["Conv %"] = tbl["Conv %"].fillna(0).apply(lambda x: f"{float(x):.2f}%")
 
 if "Overdue 90d+" in tbl.columns:
     tbl["Overdue 90d+"] = tbl["Overdue 90d+"].apply(
