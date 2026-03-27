@@ -562,8 +562,8 @@ else:
     m1.metric("Orders (30d)", count(row.get("orders_last_30d", 0)))
     m2.metric("Staff", count(row.get("active_employees", 0)))
     pay_rate = row.get("payment_rate")
-    m3.metric("Pay Rate", pct(pay_rate) if pd.notna(pay_rate) else "—",
-              help="% of delivered orders paid")
+    m3.metric("Pay Rate", pct(pay_rate) if pd.notna(pay_rate) else "N/A",
+              help="% of credit orders paid (all-time). N/A = no credit orders")
     overdue = row.get("overdue_90d_amount", 0)
     m4.metric("Overdue 90d+", naira(overdue) if overdue and overdue > 0 else "—",
               help="Unpaid orders older than 90 days")

@@ -21,7 +21,7 @@
     2. Order recency   — last order within 60 days
     3. Staff adoption  — 2+ active (non-deactivated) employees
     4. Branch presence  — at least 1 active branch
-    5. Payment health  — >60% of delivered orders paid (GoSource has credit)
+    5. Payment health  — >60% of credit orders paid (credit-only, all-time)
     6. Credit risk     — no overdue (90d+) unpaid orders
 
   Health status:
@@ -167,16 +167,22 @@ credit_aging AS (
     GROUP BY bi.business_name
 ),
 
--- 5. PAYMENT HEALTH (delivered orders: paid vs unpaid, last 90d)
+-- 5. PAYMENT HEALTH (credit orders only, all-time — measures collection reliability)
+--    Transfer/Paystack orders are paid upfront so including them inflates the rate.
+--    Customers who never used credit get NULL (not applicable).
 payment_health AS (
     SELECT
         bi.business_name,
-        COUNT(*) FILTER (WHERE LOWER(rc."status") = 'delivered') AS total_delivered,
-        COUNT(*) FILTER (WHERE LOWER(rc."status") = 'delivered'
-                           AND LOWER(COALESCE(rc."paymentStatus", '')) = 'paid') AS paid_delivered
-    FROM receipt_customer rc
-    INNER JOIN brand_ids bi ON bi.customer_id = rc.customer_id
-    WHERE rc."createdAt"::date >= CURRENT_DATE - 90
+        COUNT(*) AS total_credit_orders,
+        COUNT(*) FILTER (WHERE LOWER(COALESCE(o."paymentStatus", '')) = 'paid') AS paid_credit_orders
+    FROM (
+        SELECT DISTINCT ON (_id) *
+        FROM raw_gosource.orders
+        ORDER BY _id, "updatedAt" DESC
+    ) o
+    INNER JOIN brand_ids bi ON bi.customer_id = COALESCE(o."business._id", o.business)
+    WHERE LOWER(o.status) = 'delivered'
+      AND LOWER(o."paymentMethod") = 'credit'
     GROUP BY bi.business_name
 ),
 
@@ -205,11 +211,11 @@ assembled AS (
         COALESCE(st.total_employees, 0)    AS total_employees,
         COALESCE(st.active_employees, 0)   AS active_employees,
 
-        -- Payment health
-        COALESCE(ph.total_delivered, 0)    AS deliveries_last_90d,
-        COALESCE(ph.paid_delivered, 0)     AS paid_deliveries_90d,
-        CASE WHEN COALESCE(ph.total_delivered, 0) > 0
-             THEN ROUND(ph.paid_delivered::numeric / ph.total_delivered * 100, 1)
+        -- Payment health (credit orders only, all-time)
+        COALESCE(ph.total_credit_orders, 0)  AS total_credit_orders,
+        COALESCE(ph.paid_credit_orders, 0)   AS paid_credit_orders,
+        CASE WHEN COALESCE(ph.total_credit_orders, 0) > 0
+             THEN ROUND(ph.paid_credit_orders::numeric / ph.total_credit_orders * 100, 1)
              ELSE NULL
         END AS payment_rate,
 
@@ -241,9 +247,10 @@ assembled AS (
              THEN 1 ELSE 0
         END AS signal_branches,
 
-        -- Signal 5: Payment health — >60% of delivered orders paid
-        CASE WHEN COALESCE(ph.total_delivered, 0) > 0
-              AND ph.paid_delivered::numeric / ph.total_delivered >= 0.6
+        -- Signal 5: Payment health — >60% of credit orders paid (or no credit orders)
+        CASE WHEN COALESCE(ph.total_credit_orders, 0) = 0
+             THEN 1  -- no credit usage = no payment risk
+             WHEN ph.paid_credit_orders::numeric / ph.total_credit_orders >= 0.6
              THEN 1 ELSE 0
         END AS signal_payment,
 

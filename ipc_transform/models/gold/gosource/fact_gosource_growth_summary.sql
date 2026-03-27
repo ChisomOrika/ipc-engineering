@@ -1,0 +1,136 @@
+{{ config(
+    materialized='table',
+    schema='gold',
+    tags=['GoSource']
+) }}
+
+/*
+  Weekly growth summary — new brands, churned, reactivated, net growth.
+  One row per week (Sunday-based: Sun → Sat).
+  GoSource version: no channel/web adoption (B2B procurement, no website orders).
+
+  Week start = Sunday. To convert Postgres Monday-based DATE_TRUNC:
+    Sunday week start = DATE_TRUNC('week', date + 1)::date - 1
+*/
+
+WITH brand_signup AS (
+    SELECT
+        {{ clean_business_name('c."businessName"') }} AS business_name,
+        MIN(c."createdAt"::date) AS signup_date
+    FROM raw_gosource.customers c
+    WHERE c."businessName" IS NOT NULL
+      AND TRIM(c."businessName") != ''
+      AND NOT {{ is_test_account('c."businessName"') }}
+    GROUP BY {{ clean_business_name('c."businessName"') }}
+),
+
+-- Map all customer_ids to their cleaned brand name
+brand_ids AS (
+    SELECT
+        c."_id" AS customer_id,
+        {{ clean_business_name('c."businessName"') }} AS business_name
+    FROM raw_gosource.customers c
+    WHERE c."businessName" IS NOT NULL
+      AND TRIM(c."businessName") != ''
+      AND NOT {{ is_test_account('c."businessName"') }}
+),
+
+-- Deduplicate orders to order-level (GoSource orders are product-level rows)
+deduped_orders AS (
+    SELECT DISTINCT ON (_id) *
+    FROM raw_gosource.orders
+    ORDER BY _id, "updatedAt" DESC
+),
+
+-- Generate weekly buckets (Sunday-based)
+weeks AS (
+    SELECT generate_series(
+        (DATE_TRUNC('week', (SELECT MIN(signup_date) FROM brand_signup) + 1)::date - 1),
+        (DATE_TRUNC('week', CURRENT_DATE + 1)::date - 1),
+        '1 week'::interval
+    )::date AS week_start
+),
+
+-- New brands per week (first signup falls in this week)
+new_brands AS (
+    SELECT
+        (DATE_TRUNC('week', signup_date + 1)::date - 1) AS week_start,
+        COUNT(*) AS new_brand_count
+    FROM brand_signup
+    GROUP BY (DATE_TRUNC('week', signup_date + 1)::date - 1)
+),
+
+-- Brand order activity per week
+brand_weekly_orders AS (
+    SELECT
+        bi.business_name,
+        (DATE_TRUNC('week', o."createdAt"::date + 1)::date - 1) AS week_start,
+        COUNT(*) AS order_count
+    FROM deduped_orders o
+    INNER JOIN brand_ids bi ON bi.customer_id = COALESCE(o."business._id", o.business)
+    WHERE LOWER(o.status) = 'delivered'
+    GROUP BY bi.business_name, (DATE_TRUNC('week', o."createdAt"::date + 1)::date - 1)
+),
+
+-- Active brands per week (had at least 1 order)
+active_per_week AS (
+    SELECT
+        week_start,
+        COUNT(DISTINCT business_name) AS active_brands,
+        SUM(order_count) AS total_orders
+    FROM brand_weekly_orders
+    GROUP BY week_start
+),
+
+-- Churn detection: active last week but not this week
+brand_week_pairs AS (
+    SELECT DISTINCT business_name, week_start
+    FROM brand_weekly_orders
+),
+
+churned_per_week AS (
+    SELECT
+        w.week_start,
+        COUNT(*) AS churned_brands
+    FROM weeks w
+    INNER JOIN brand_week_pairs prev ON prev.week_start = w.week_start - 7
+    LEFT JOIN brand_week_pairs curr ON curr.business_name = prev.business_name AND curr.week_start = w.week_start
+    WHERE curr.business_name IS NULL
+    GROUP BY w.week_start
+),
+
+-- Reactivation: not active last week, active this week, but was active before
+reactivated_per_week AS (
+    SELECT
+        w.week_start,
+        COUNT(*) AS reactivated_brands
+    FROM weeks w
+    INNER JOIN brand_week_pairs curr ON curr.week_start = w.week_start
+    LEFT JOIN brand_week_pairs prev ON prev.business_name = curr.business_name AND prev.week_start = w.week_start - 7
+    WHERE prev.business_name IS NULL
+      -- Must have been active in some earlier week (not brand new this week)
+      AND EXISTS (
+          SELECT 1 FROM brand_week_pairs older
+          WHERE older.business_name = curr.business_name
+            AND older.week_start < w.week_start - 7
+      )
+    GROUP BY w.week_start
+)
+
+SELECT
+    w.week_start,
+    w.week_start + 6 AS week_end,
+    COALESCE(nb.new_brand_count, 0)       AS new_brands,
+    COALESCE(ap.active_brands, 0)         AS active_brands,
+    COALESCE(ch.churned_brands, 0)        AS churned_brands,
+    COALESCE(re.reactivated_brands, 0)    AS reactivated_brands,
+    COALESCE(nb.new_brand_count, 0) - COALESCE(ch.churned_brands, 0) + COALESCE(re.reactivated_brands, 0)
+        AS net_growth,
+    COALESCE(ap.total_orders, 0)          AS total_orders
+
+FROM weeks w
+LEFT JOIN new_brands nb          ON nb.week_start = w.week_start
+LEFT JOIN active_per_week ap     ON ap.week_start = w.week_start
+LEFT JOIN churned_per_week ch    ON ch.week_start = w.week_start
+LEFT JOIN reactivated_per_week re ON re.week_start = w.week_start
+ORDER BY w.week_start

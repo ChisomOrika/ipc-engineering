@@ -1,7 +1,7 @@
 """
 IPC Growth & Retention — Strategic
 Weekly growth trends, retention cohorts, churn detection.
-DAASH only (for now).
+Supports both DAASH and GoSource service lines.
 """
 
 import streamlit as st
@@ -15,7 +15,7 @@ from utils.fmt    import naira, count
 from utils.styles import (inject_css, page_header, section_title,
                            CHART_LAYOUT, COLOR_HEALTHY, COLOR_AT_RISK,
                            COLOR_CRITICAL, COLOR_NEUTRAL,
-                           COLOR_DAASH)
+                           COLOR_DAASH, COLOR_GOSOURCE)
 
 st.set_page_config(
     page_title="Customer Growth · IPC",
@@ -33,19 +33,20 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
     st.markdown("---")
-    st.markdown(
-        '<div style="font-size:11px;color:#475569;">DAASH service line</div>',
-        unsafe_allow_html=True,
-    )
+    service = st.selectbox("Service Line", ["DAASH", "GoSource"], index=0)
+    st.markdown("---")
     st.markdown(
         '<div style="font-size:11px;color:#475569;">Data refreshes every 6 hours</div>',
         unsafe_allow_html=True,
     )
 
+brand_color = COLOR_DAASH if service == "DAASH" else COLOR_GOSOURCE
+is_daash = service == "DAASH"
+
 page_header(
     "Customer Growth",
-    "DAASH · Weekly growth, cohort retention & churn tracking",
-    color=COLOR_DAASH,
+    f"{service} · Weekly growth, cohort retention & churn tracking",
+    color=brand_color,
 )
 
 
@@ -53,9 +54,14 @@ page_header(
 # LOAD DATA
 # ═══════════════════════════════════════════════════════════════════════════════
 
-growth   = run_query("SELECT * FROM gold.fact_dash_growth_summary ORDER BY week_start")
-cohorts  = run_query("SELECT * FROM gold.fact_dash_retention_cohorts ORDER BY cohort_month")
-churn    = run_query("SELECT * FROM gold.fact_dash_churn_weekly ORDER BY revenue_last_week DESC NULLS LAST")
+if is_daash:
+    growth   = run_query("SELECT * FROM gold.fact_dash_growth_summary ORDER BY week_start")
+    cohorts  = run_query("SELECT * FROM gold.fact_dash_retention_cohorts ORDER BY cohort_month")
+    churn    = run_query("SELECT * FROM gold.fact_dash_churn_weekly ORDER BY revenue_last_week DESC NULLS LAST")
+else:
+    growth   = run_query("SELECT * FROM gold.fact_gosource_growth_summary ORDER BY week_start")
+    cohorts  = run_query("SELECT * FROM gold.fact_gosource_retention_cohorts ORDER BY cohort_month")
+    churn    = run_query("SELECT * FROM gold.fact_gosource_churn_weekly ORDER BY revenue_last_week DESC NULLS LAST")
 
 if growth.empty:
     st.warning("No growth data available. Run dbt models first.")
@@ -77,7 +83,12 @@ section_title(f"THIS WEEK · {week_start_str} – {week_end_str} (Sun – Sat)")
 churned_this_week = churn[churn.weekly_status == "Churned"]
 reactivated_this_week = churn[churn.weekly_status == "Reactivated"]
 
-k1, k2, k3, k4, k5, k6 = st.columns(6)
+if is_daash:
+    k1, k2, k3, k4, k5, k6 = st.columns(6)
+    k6.metric("Web Adoption", f"{latest.web_adoption_pct:.0f}%",
+              help="% of active brands with website orders this week")
+else:
+    k1, k2, k3, k4, k5 = st.columns(5)
 
 k1.metric("Active Brands", count(latest.active_brands),
           delta=f"{int(latest.active_brands - prev.active_brands):+d}" if len(growth) > 1 else None)
@@ -87,8 +98,6 @@ k3.metric("Churned", count(len(churned_this_week)),
 k4.metric("Reactivated", count(len(reactivated_this_week)))
 k5.metric("Net Growth", f"{int(latest.net_growth):+d}",
           delta_color="normal")
-k6.metric("Web Adoption", f"{latest.web_adoption_pct:.0f}%",
-          help="% of active brands with website orders this week")
 
 st.markdown("")
 
@@ -196,7 +205,7 @@ fig_active = go.Figure()
 fig_active.add_trace(go.Scatter(
     x=recent_growth.week_label, y=recent_growth.active_brands,
     mode="lines+markers+text", name="Active Brands",
-    line=dict(color=COLOR_DAASH, width=3),
+    line=dict(color=brand_color, width=3),
     marker=dict(size=6),
     text=recent_growth.active_brands,
     textposition="top center",
@@ -332,8 +341,9 @@ if not churned_this_week.empty:
         use_container_width=True,
         height=min(400, 40 + len(churn_tbl) * 35),
     )
+    dl_prefix = "daash" if is_daash else "gosource"
     st.download_button("Download churn list", churn_tbl.to_csv(index=False),
-                       "daash_churned_this_week.csv", "text/csv", key="dl_churn")
+                       f"{dl_prefix}_churned_this_week.csv", "text/csv", key="dl_churn")
 else:
     st.success("No brands churned this week!")
 
@@ -361,51 +371,52 @@ st.markdown("---")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# 5. WEB ADOPTION TREND
+# 5. WEB ADOPTION TREND (DAASH only)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-section_title("WEB ADOPTION TREND")
-st.markdown(
-    '<div style="font-size:12px;color:#64748B;margin-bottom:12px;">'
-    'What % of active brands are using the website channel? '
-    'Higher = better adoption of the DAASH website product.</div>',
-    unsafe_allow_html=True,
-)
+if is_daash:
+    section_title("WEB ADOPTION TREND")
+    st.markdown(
+        '<div style="font-size:12px;color:#64748B;margin-bottom:12px;">'
+        'What % of active brands are using the website channel? '
+        'Higher = better adoption of the DAASH website product.</div>',
+        unsafe_allow_html=True,
+    )
 
-web_data = recent_growth[recent_growth.active_brands > 0].copy()
-if not web_data.empty:
-    c1, c2 = st.columns(2)
-    with c1:
-        fig_web = go.Figure()
-        fig_web.add_trace(go.Bar(
-            x=web_data.week_label, y=web_data.web_enabled_brands,
-            name="Web-Enabled", marker_color="#3B82F6",
-        ))
-        fig_web.add_trace(go.Bar(
-            x=web_data.week_label, y=web_data.pos_only_brands,
-            name="POS-Only", marker_color=COLOR_NEUTRAL,
-        ))
-        web_layout = {k: v for k, v in CHART_LAYOUT.items() if k not in ("margin",)}
-        fig_web.update_layout(
-            **web_layout, barmode="stack", height=300,
-            margin=dict(t=10, b=10, l=10, r=10),
-        )
-        st.plotly_chart(fig_web, use_container_width=True)
+    web_data = recent_growth[recent_growth.active_brands > 0].copy()
+    if not web_data.empty:
+        c1, c2 = st.columns(2)
+        with c1:
+            fig_web = go.Figure()
+            fig_web.add_trace(go.Bar(
+                x=web_data.week_label, y=web_data.web_enabled_brands,
+                name="Web-Enabled", marker_color="#3B82F6",
+            ))
+            fig_web.add_trace(go.Bar(
+                x=web_data.week_label, y=web_data.pos_only_brands,
+                name="POS-Only", marker_color=COLOR_NEUTRAL,
+            ))
+            web_layout = {k: v for k, v in CHART_LAYOUT.items() if k not in ("margin",)}
+            fig_web.update_layout(
+                **web_layout, barmode="stack", height=300,
+                margin=dict(t=10, b=10, l=10, r=10),
+            )
+            st.plotly_chart(fig_web, use_container_width=True)
 
-    with c2:
-        fig_pct = go.Figure()
-        fig_pct.add_trace(go.Scatter(
-            x=web_data.week_label, y=web_data.web_adoption_pct,
-            mode="lines+markers",
-            line=dict(color="#3B82F6", width=2),
-            marker=dict(size=5),
-            hovertemplate="<b>%{x}</b><br>%{y:.1f}% web adoption<extra></extra>",
-        ))
-        pct_layout = {k: v for k, v in CHART_LAYOUT.items() if k not in ("margin", "yaxis")}
-        fig_pct.update_layout(
-            **pct_layout, height=300,
-            margin=dict(t=10, b=10, l=10, r=10),
-            yaxis=dict(title="Web Adoption %", gridcolor="#F1F5F9",
-                      tickfont=dict(size=11), ticksuffix="%"),
-        )
-        st.plotly_chart(fig_pct, use_container_width=True)
+        with c2:
+            fig_pct = go.Figure()
+            fig_pct.add_trace(go.Scatter(
+                x=web_data.week_label, y=web_data.web_adoption_pct,
+                mode="lines+markers",
+                line=dict(color="#3B82F6", width=2),
+                marker=dict(size=5),
+                hovertemplate="<b>%{x}</b><br>%{y:.1f}% web adoption<extra></extra>",
+            ))
+            pct_layout = {k: v for k, v in CHART_LAYOUT.items() if k not in ("margin", "yaxis")}
+            fig_pct.update_layout(
+                **pct_layout, height=300,
+                margin=dict(t=10, b=10, l=10, r=10),
+                yaxis=dict(title="Web Adoption %", gridcolor="#F1F5F9",
+                          tickfont=dict(size=11), ticksuffix="%"),
+            )
+            st.plotly_chart(fig_pct, use_container_width=True)
