@@ -93,15 +93,15 @@ kpi = run_query(f"""
         FROM gold.fact_ar_aging
     ),
     burn AS (
-        SELECT COALESCE(AVG(monthly_burn), 0) AS avg_burn
-        FROM (
-            SELECT cash_position_month, SUM(daily_outflow_amount) AS monthly_burn
-            FROM gold.fact_cash_position
-            WHERE cash_position_date >= CURRENT_DATE - INTERVAL '3 months'
-            GROUP BY cash_position_month
-            ORDER BY cash_position_month DESC
-            LIMIT 3
-        ) t
+        SELECT
+            COALESCE(SUM(daily_outflow_amount) / NULLIF(COUNT(*), 0), 0) AS avg_daily_burn,
+            COALESCE(SUM(daily_outflow_amount) / NULLIF(COUNT(*), 0), 0) * 30 AS avg_monthly_burn
+        FROM gold.fact_cash_position
+        WHERE cash_position_date >= CURRENT_DATE - INTERVAL '90 days'
+    ),
+    real_balance AS (
+        SELECT account_current_balance_amount::numeric AS balance
+        FROM bv.bv_lenco_accounts LIMIT 1
     )
     SELECT
         rev.curr_rev,    rev.curr_orders,
@@ -113,8 +113,9 @@ kpi = run_query(f"""
         exp.curr_exp,    exp.prev_exp,
         cash.cash_balance,
         ar.total_ar,     ar.ar_count,
-        burn.avg_burn
-    FROM rev, prof, exp, cash, ar, burn
+        burn.avg_daily_burn, burn.avg_monthly_burn,
+        real_balance.balance AS current_balance
+    FROM rev, prof, exp, cash, ar, burn, real_balance
 """)
 
 # Monthly revenue + expenses trend for combo chart
@@ -185,8 +186,10 @@ prev_expenses = _v(kpi, "prev_exp")
 cash          = _v(kpi, "cash_balance")
 total_ar      = _v(kpi, "total_ar")
 ar_count      = int(_v(kpi, "ar_count"))
-avg_burn      = _v(kpi, "avg_burn")
-runway_months = (cash / avg_burn) if avg_burn > 0 else None
+avg_daily_burn  = _v(kpi, "avg_daily_burn")
+avg_monthly_burn = _v(kpi, "avg_monthly_burn")
+current_balance = _v(kpi, "current_balance")
+runway_days     = (current_balance / avg_daily_burn) if avg_daily_burn > 0 else None
 
 aov_curr = curr_revenue / curr_orders if curr_orders > 0 else 0
 aov_prev = prev_revenue / prev_orders if prev_orders > 0 else 0
@@ -243,28 +246,27 @@ c1, c2, c3 = st.columns(3)
 
 with c1:
     st.metric(
-        "🔥 AVG MONTHLY BURN",
-        naira(avg_burn),
-        delta="3-month trailing average",
+        "🔥 AVG DAILY BURN",
+        naira(avg_daily_burn),
+        delta=f"~{naira(avg_monthly_burn)}/mo",
         delta_color="off",
         help=(
-            "Average monthly cash outflows from the Lenco bank account over the last 3 months. "
-            "Calculated as: SUM(daily_outflow_amount) per month → 3-month average. "
+            "Average daily outflow over the last 90 days (Lenco debits). "
+            "Includes zero-outflow days for honest averaging. "
             "Source: gold.fact_cash_position"
         )
     )
 
 with c2:
     st.metric(
-        "🏦 LENCO NET MOVEMENT",
-        naira(cash),
-        delta="Cumulative since first recorded txn",
+        "🏦 LENCO BALANCE",
+        naira(current_balance),
+        delta=f"Runway: {runway_days:.0f} days" if runway_days else "Runway: N/A",
         delta_color="off",
         help=(
-            "Cumulative net of ALL Lenco transactions = Total Credits − Total Debits. "
-            "Verified against raw_lenco.transactions (no duplicates). "
-            "This is NET MOVEMENT — not the actual account opening balance. "
-            "Source: gold.fact_cash_position (cumulative_net_movement_amount)"
+            "Live balance from Lenco accounts API (Providus Bank). "
+            "Runway = balance ÷ avg daily burn (90-day average). "
+            "Source: bv.bv_lenco_accounts"
         )
     )
 

@@ -432,8 +432,10 @@ section_title("(E) LIQUIDITY & CASH RUNWAY")
 lq1, lq2, lq3 = st.columns(3)
 lq1.metric("🏦 Lenco Account Balance", naira(current_balance),
            help="Live balance from Lenco API. This is the Providus bank account balance.")
-lq2.metric("🔥 Avg Monthly Burn", naira(avg_burn),
-           help="Average monthly Lenco outflows over the last 3 months.")
+lq2.metric("🔥 Avg Daily Burn", naira(avg_daily_burn),
+           delta=f"~{naira(avg_monthly_burn)}/mo",
+           delta_color="off",
+           help="Average daily outflow over the last 90 days (Lenco debits). Includes zero-outflow days.")
 lq3.metric("⏳ Lenco Runway", f"{runway_days:.0f} days" if runway_days else "N/A",
-           help="How long the current Lenco balance lasts at the current burn rate. "
+           help="Current Lenco balance ÷ avg daily burn (90-day average). "
                 "Note: this reflects the Lenco account only — not 9japay or other balances.")
