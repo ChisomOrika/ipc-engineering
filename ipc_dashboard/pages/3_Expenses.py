@@ -38,7 +38,7 @@ exp_kpi = run_query(f"""
         WHERE expense_date BETWEEN '{prev_start}' AND '{end}'
     ),
     rev AS (
-        SELECT SUM(revenue_amount) AS revenue
+        SELECT SUM(sales_amount) AS revenue
         FROM gold.fact_revenue
         WHERE revenue_order_date BETWEEN '{start}' AND '{end}'
     )

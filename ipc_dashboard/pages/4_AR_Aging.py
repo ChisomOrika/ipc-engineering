@@ -23,7 +23,7 @@ page_header("Accounts Receivable — Aging Analysis",
 # ─── Queries ──────────────────────────────────────────────────────────────────
 ar_kpi = run_query("""
     WITH ltm AS (
-        SELECT SUM(revenue_amount) AS ltm_rev
+        SELECT SUM(sales_amount) AS ltm_rev
         FROM gold.fact_revenue
         WHERE revenue_order_date >= CURRENT_DATE - INTERVAL '12 months'
     )

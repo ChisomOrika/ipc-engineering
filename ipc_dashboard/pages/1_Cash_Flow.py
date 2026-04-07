@@ -48,15 +48,11 @@ cash_kpi = run_query(f"""
         WHERE cash_position_date BETWEEN '{prev_start}' AND '{end}'
     ),
     burn AS (
-        SELECT COALESCE(AVG(monthly_burn), 0) AS avg_burn
-        FROM (
-            SELECT cash_position_month, SUM(daily_outflow_amount) AS monthly_burn
-            FROM gold.fact_cash_position
-            WHERE cash_position_date >= CURRENT_DATE - INTERVAL '3 months'
-            GROUP BY cash_position_month
-            ORDER BY cash_position_month DESC
-            LIMIT 3
-        ) t
+        SELECT
+            COALESCE(SUM(daily_outflow_amount) / NULLIF(COUNT(*), 0), 0) AS avg_daily_burn,
+            COALESCE(SUM(daily_outflow_amount) / NULLIF(COUNT(*), 0), 0) * 30 AS avg_monthly_burn
+        FROM gold.fact_cash_position
+        WHERE cash_position_date >= CURRENT_DATE - INTERVAL '90 days'
     )
     SELECT
         real_balance.balance - after_period.net_after                           AS closing_balance,
@@ -64,7 +60,8 @@ cash_kpi = run_query(f"""
         real_balance.balance                                                    AS current_balance,
         flows.inflow, flows.outflow, flows.net,
         flows.prev_inflow, flows.prev_outflow,
-        burn.avg_burn
+        burn.avg_daily_burn,
+        burn.avg_monthly_burn
     FROM real_balance, after_period, flows, burn
 """)
 
@@ -168,8 +165,8 @@ monthly_sl_rev = run_query(f"""
     SELECT
         TO_CHAR(revenue_month, 'Mon')                                           AS label,
         revenue_month,
-        SUM(CASE WHEN service_line = 'DAASH'    THEN revenue_amount ELSE 0 END) / 1e6 AS daash_m,
-        SUM(CASE WHEN service_line = 'GoSource' THEN revenue_amount ELSE 0 END) / 1e6 AS gosource_m
+        SUM(CASE WHEN service_line = 'DAASH'    THEN sales_amount ELSE 0 END) / 1e6 AS daash_m,
+        SUM(CASE WHEN service_line = 'GoSource' THEN sales_amount ELSE 0 END) / 1e6 AS gosource_m
     FROM gold.fact_revenue
     WHERE revenue_order_date BETWEEN '{start}' AND '{end}'
     GROUP BY revenue_month
@@ -189,10 +186,11 @@ current_balance = _v(cash_kpi, "current_balance")
 inflow          = _v(cash_kpi, "inflow")
 outflow         = _v(cash_kpi, "outflow")
 net             = _v(cash_kpi, "net")
-avg_burn        = _v(cash_kpi, "avg_burn")
+avg_daily_burn  = _v(cash_kpi, "avg_daily_burn")
+avg_monthly_burn = _v(cash_kpi, "avg_monthly_burn")
 prev_inflow     = _v(cash_kpi, "prev_inflow")
 prev_outflow    = _v(cash_kpi, "prev_outflow")
-runway_days     = (current_balance / (avg_burn / 30)) if avg_burn > 0 else None
+runway_days     = (current_balance / avg_daily_burn) if avg_daily_burn > 0 else None
 
 # ══════════════════════════════════════════════════════════════════════════════
 # (a) CASH POSITION
@@ -223,10 +221,12 @@ c6.metric("📉 Period Outflows", naira(outflow),
           delta=(f"{_delta(outflow, prev_outflow):+.1f}% vs prev"
                  if _delta(outflow, prev_outflow) is not None else None),
           delta_color="inverse")
-c7.metric("🔥 Avg Monthly Burn", naira(avg_burn),
-          help="Average monthly outflows over the last 3 months (Lenco debits).")
+c7.metric("🔥 Avg Daily Burn", naira(avg_daily_burn),
+          delta=f"~{naira(avg_monthly_burn)}/mo",
+          delta_color="off",
+          help="Average daily outflow over the last 90 days (Lenco debits). Includes zero-outflow days for honest averaging.")
 c8.metric("⏳ Cash Runway", f"{runway_days:.0f} days" if runway_days else "N/A",
-          help="Current Lenco balance ÷ avg daily burn. Based on Lenco account only.")
+          help="Current Lenco balance ÷ avg daily burn (90-day average). Based on Lenco account only.")
 
 st.markdown("")
 

@@ -34,13 +34,13 @@ kpi = run_query(f"""
     WITH curr AS (
         SELECT
             COUNT(*)                                                        AS orders,
-            SUM(revenue_amount)                                             AS revenue,
+            SUM(sales_amount)                                             AS revenue,
             SUM(revenue_delivery_fee_amount)                                AS delivery_fee,
             SUM(revenue_service_charge_amount)                              AS svc_charge,
             COUNT(*) FILTER (WHERE {AGG_CLAUSE})                           AS agg_orders,
-            SUM(revenue_amount) FILTER (WHERE {AGG_CLAUSE})                AS agg_rev,
+            SUM(sales_amount) FILTER (WHERE {AGG_CLAUSE})                AS agg_rev,
             COUNT(*) FILTER (WHERE NOT {AGG_CLAUSE})                       AS direct_orders,
-            SUM(revenue_amount) FILTER (WHERE NOT {AGG_CLAUSE})            AS direct_rev
+            SUM(sales_amount) FILTER (WHERE NOT {AGG_CLAUSE})            AS direct_rev
         FROM gold.fact_revenue
         WHERE service_line = 'DAASH'
           AND revenue_order_date BETWEEN '{start}' AND '{end}'
@@ -48,7 +48,7 @@ kpi = run_query(f"""
     prev AS (
         SELECT
             COUNT(*)            AS orders,
-            SUM(revenue_amount) AS revenue
+            SUM(sales_amount) AS revenue
         FROM gold.fact_revenue
         WHERE service_line = 'DAASH'
           AND revenue_order_date BETWEEN '{prev_start}' AND '{prev_end}'
@@ -73,11 +73,11 @@ monthly = run_query(f"""
     SELECT
         revenue_month,
         TO_CHAR(revenue_month, 'Mon YY')                                    AS label,
-        SUM(revenue_amount) / 1e6                                           AS rev_m,
+        SUM(sales_amount) / 1e6                                           AS rev_m,
         COUNT(*)                                                             AS orders,
-        SUM(revenue_amount) / NULLIF(COUNT(*), 0)                           AS aov,
-        SUM(revenue_amount) FILTER (WHERE {AGG_CLAUSE}) / 1e6              AS agg_rev_m,
-        SUM(revenue_amount) FILTER (WHERE NOT {AGG_CLAUSE}) / 1e6          AS direct_rev_m
+        SUM(sales_amount) / NULLIF(COUNT(*), 0)                           AS aov,
+        SUM(sales_amount) FILTER (WHERE {AGG_CLAUSE}) / 1e6              AS agg_rev_m,
+        SUM(sales_amount) FILTER (WHERE NOT {AGG_CLAUSE}) / 1e6          AS direct_rev_m
     FROM gold.fact_revenue
     WHERE service_line = 'DAASH'
       AND revenue_order_date BETWEEN '{start}' AND '{end}'
@@ -112,7 +112,7 @@ channel_data = run_query(f"""
             ELSE 'Other'
         END                                                                  AS channel,
         COUNT(*)                                                             AS orders,
-        SUM(revenue_amount) / 1e6                                           AS rev_m
+        SUM(sales_amount) / 1e6                                           AS rev_m
     FROM gold.fact_revenue
     WHERE service_line = 'DAASH'
       AND revenue_order_date BETWEEN '{start}' AND '{end}'
@@ -125,8 +125,8 @@ top_customers = run_query(f"""
     SELECT
         COALESCE(NULLIF(TRIM(revenue_customer_name), ''), 'Unknown')        AS customer,
         COUNT(*)                                                             AS orders,
-        SUM(revenue_amount) / 1e6                                           AS rev_m,
-        SUM(revenue_amount) / NULLIF(COUNT(*), 0)                           AS aov
+        SUM(sales_amount) / 1e6                                           AS rev_m,
+        SUM(sales_amount) / NULLIF(COUNT(*), 0)                           AS aov
     FROM gold.fact_revenue
     WHERE service_line = 'DAASH'
       AND revenue_order_date BETWEEN '{start}' AND '{end}'
@@ -165,7 +165,7 @@ c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric("🍔 TOTAL ORDERS", count(orders),
           delta=f"{'+' if _delta(orders,prev_orders) or 0 >= 0 else ''}{_delta(orders,prev_orders):.1f}% vs prev" if _delta(orders,prev_orders) else None,
           help="Delivered DAASH orders in period. Includes direct + aggregator channels.")
-c2.metric("💰 REVENUE", naira(revenue),
+c2.metric("💰 SALES", naira(revenue),
           delta=f"{'+' if (_delta(revenue,prev_revenue) or 0) >= 0 else ''}{_delta(revenue,prev_revenue):.1f}% vs prev" if _delta(revenue,prev_revenue) else None,
           help="Total order value for delivered DAASH orders. Source: gold.fact_revenue")
 c3.metric("📊 PLATFORM FEE (GP)", naira(curr_gp),

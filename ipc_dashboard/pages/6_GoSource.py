@@ -28,21 +28,21 @@ kpi = run_query(f"""
     WITH curr AS (
         SELECT
             COUNT(*)                                                        AS orders,
-            SUM(revenue_amount)                                             AS revenue,
+            SUM(sales_amount)                                             AS revenue,
             SUM(revenue_service_charge_amount)                              AS svc_charge,
             SUM(revenue_delivery_fee_amount)                                AS delivery_fee,
             -- Upfront = Transfer / Paystack / Wallet
             COUNT(*) FILTER (WHERE LOWER(revenue_payment_method) != 'credit') AS upfront_orders,
-            SUM(revenue_amount) FILTER (WHERE LOWER(revenue_payment_method) != 'credit') AS upfront_rev,
+            SUM(sales_amount) FILTER (WHERE LOWER(revenue_payment_method) != 'credit') AS upfront_rev,
             -- Credit (paid)
             COUNT(*) FILTER (WHERE LOWER(revenue_payment_method) = 'credit') AS credit_orders,
-            SUM(revenue_amount) FILTER (WHERE LOWER(revenue_payment_method) = 'credit') AS credit_rev
+            SUM(sales_amount) FILTER (WHERE LOWER(revenue_payment_method) = 'credit') AS credit_rev
         FROM gold.fact_revenue
         WHERE service_line = 'GoSource'
           AND revenue_order_date BETWEEN '{start}' AND '{end}'
     ),
     prev AS (
-        SELECT COUNT(*) AS orders, SUM(revenue_amount) AS revenue
+        SELECT COUNT(*) AS orders, SUM(sales_amount) AS revenue
         FROM gold.fact_revenue
         WHERE service_line = 'GoSource'
           AND revenue_order_date BETWEEN '{prev_start}' AND '{prev_end}'
@@ -76,10 +76,10 @@ monthly = run_query(f"""
         revenue_month,
         TO_CHAR(revenue_month, 'Mon YY')                                    AS label,
         COUNT(*)                                                             AS orders,
-        SUM(revenue_amount) / 1e6                                           AS rev_m,
-        SUM(revenue_amount) / NULLIF(COUNT(*), 0)                           AS aov,
-        SUM(revenue_amount) FILTER (WHERE LOWER(revenue_payment_method) = 'credit') / 1e6  AS credit_rev_m,
-        SUM(revenue_amount) FILTER (WHERE LOWER(revenue_payment_method) != 'credit') / 1e6 AS upfront_rev_m
+        SUM(sales_amount) / 1e6                                           AS rev_m,
+        SUM(sales_amount) / NULLIF(COUNT(*), 0)                           AS aov,
+        SUM(sales_amount) FILTER (WHERE LOWER(revenue_payment_method) = 'credit') / 1e6  AS credit_rev_m,
+        SUM(sales_amount) FILTER (WHERE LOWER(revenue_payment_method) != 'credit') / 1e6 AS upfront_rev_m
     FROM gold.fact_revenue
     WHERE service_line = 'GoSource'
       AND revenue_order_date BETWEEN '{start}' AND '{end}'
@@ -104,10 +104,10 @@ top_customers = run_query(f"""
     SELECT
         COALESCE(NULLIF(TRIM(revenue_customer_name), ''), 'Unknown')        AS customer,
         COUNT(*)                                                             AS orders,
-        SUM(revenue_amount) / 1e6                                           AS rev_m,
-        SUM(revenue_amount) / NULLIF(COUNT(*), 0)                           AS aov,
-        SUM(revenue_amount) FILTER (WHERE LOWER(revenue_payment_method) = 'credit') / 1e6  AS credit_m,
-        SUM(revenue_amount) FILTER (WHERE LOWER(revenue_payment_method) != 'credit') / 1e6 AS upfront_m
+        SUM(sales_amount) / 1e6                                           AS rev_m,
+        SUM(sales_amount) / NULLIF(COUNT(*), 0)                           AS aov,
+        SUM(sales_amount) FILTER (WHERE LOWER(revenue_payment_method) = 'credit') / 1e6  AS credit_m,
+        SUM(sales_amount) FILTER (WHERE LOWER(revenue_payment_method) != 'credit') / 1e6 AS upfront_m
     FROM gold.fact_revenue
     WHERE service_line = 'GoSource'
       AND revenue_order_date BETWEEN '{start}' AND '{end}'
@@ -126,7 +126,7 @@ pay_data = run_query(f"""
             ELSE 'Transfer'
         END                                                                  AS method,
         COUNT(*)                                                             AS orders,
-        SUM(revenue_amount) / 1e6                                           AS rev_m
+        SUM(sales_amount) / 1e6                                           AS rev_m
     FROM gold.fact_revenue
     WHERE service_line = 'GoSource'
       AND revenue_order_date BETWEEN '{start}' AND '{end}'
@@ -169,7 +169,7 @@ c1, c2, c3, c4, c5, c6 = st.columns(6)
 c1.metric("📦 TOTAL ORDERS", count(orders),
           delta=f"{'+' if (_delta(orders,prev_orders) or 0) >= 0 else ''}{_delta(orders,prev_orders):.1f}% vs prev" if _delta(orders,prev_orders) else None,
           help="Delivered + paid GoSource orders. Source: gold.fact_revenue WHERE service_line='GoSource'")
-c2.metric("💰 REVENUE", naira(revenue),
+c2.metric("💰 SALES", naira(revenue),
           delta=f"{'+' if (_delta(revenue,prev_revenue) or 0) >= 0 else ''}{_delta(revenue,prev_revenue):.1f}% vs prev" if _delta(revenue,prev_revenue) else None,
           help="Total order value for delivered + paid GoSource orders. Source: gold.fact_revenue")
 c3.metric("📊 SERVICE CHARGE (GP)", naira(curr_gp),

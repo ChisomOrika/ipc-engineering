@@ -15,9 +15,9 @@ def sidebar_filters(extra_filters: bool = False):
 
         period = st.selectbox(
             "Time Period",
-            ["Month to Date", "Last 30 Days", "Last 90 Days",
+            ["Month to Date", "This Month", "Last 30 Days", "Last 90 Days",
              "This Year", "Last 12 Months", "All Time", "Custom Range"],
-            index=3,
+            index=4,
             key="period_select",
         )
 
@@ -26,6 +26,11 @@ def sidebar_filters(extra_filters: bool = False):
         if period == "Month to Date":
             start = today.replace(day=1)
             end   = today
+        elif period == "This Month":
+            import calendar
+            start = today.replace(day=1)
+            last_day = calendar.monthrange(today.year, today.month)[1]
+            end   = today.replace(day=last_day)
         elif period == "Last 30 Days":
             start = today - dt.timedelta(days=30)
             end   = today

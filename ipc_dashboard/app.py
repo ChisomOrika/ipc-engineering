@@ -38,7 +38,7 @@ kpi = run_query(f"""
     WITH rev AS (
         SELECT
             SUM(CASE WHEN revenue_order_date BETWEEN '{start}' AND '{end}'
-                     THEN revenue_amount END)                               AS curr_rev,
+                     THEN sales_amount END)                                 AS curr_rev,
             COUNT(CASE WHEN revenue_order_date BETWEEN '{start}' AND '{end}'
                        THEN 1 END)                                          AS curr_orders,
             COUNT(CASE WHEN revenue_order_date BETWEEN '{start}' AND '{end}'
@@ -46,7 +46,7 @@ kpi = run_query(f"""
             COUNT(CASE WHEN revenue_order_date BETWEEN '{start}' AND '{end}'
                        AND service_line = 'GoSource' THEN 1 END)           AS curr_gs_orders,
             SUM(CASE WHEN revenue_order_date BETWEEN '{prev_start}' AND '{prev_end}'
-                     THEN revenue_amount END)                               AS prev_rev,
+                     THEN sales_amount END)                                 AS prev_rev,
             COUNT(CASE WHEN revenue_order_date BETWEEN '{prev_start}' AND '{prev_end}'
                        THEN 1 END)                                          AS prev_orders,
             COUNT(CASE WHEN revenue_order_date BETWEEN '{prev_start}' AND '{prev_end}'
@@ -62,13 +62,13 @@ kpi = run_query(f"""
             COALESCE(SUM(CASE WHEN profit_date BETWEEN '{start}' AND '{end}'
                          THEN NULLIF(profit_gross_profit_amount, 'NaN'::numeric) END), 0) AS curr_gp,
             COALESCE(SUM(CASE WHEN profit_date BETWEEN '{start}' AND '{end}'
-                         THEN profit_revenue_amount END), 0)                               AS curr_prof_rev,
+                         THEN profit_sales_amount END), 0)                               AS curr_prof_rev,
             COALESCE(SUM(CASE WHEN profit_date BETWEEN '{start}' AND '{end}'
                          THEN NULLIF(profit_cogs_amount, 'NaN'::numeric) END), 0)         AS curr_cogs,
             COALESCE(SUM(CASE WHEN profit_date BETWEEN '{prev_start}' AND '{prev_end}'
                          THEN NULLIF(profit_gross_profit_amount, 'NaN'::numeric) END), 0) AS prev_gp,
             COALESCE(SUM(CASE WHEN profit_date BETWEEN '{prev_start}' AND '{prev_end}'
-                         THEN profit_revenue_amount END), 0)                               AS prev_prof_rev
+                         THEN profit_sales_amount END), 0)                               AS prev_prof_rev
         FROM gold.fact_profitability
         WHERE profit_date BETWEEN '{prev_start}' AND '{end}'
     ),
@@ -128,7 +128,7 @@ monthly_combo = run_query(f"""
         SELECT date_trunc('month', revenue_order_date)::date AS m,
                TO_CHAR(date_trunc('month', revenue_order_date), 'Mon YY') AS label,
                'revenue' AS type,
-               revenue_amount AS val
+               sales_amount AS val
         FROM gold.fact_revenue
         WHERE revenue_order_date BETWEEN '{start}' AND '{end}'
         UNION ALL
@@ -149,7 +149,7 @@ monthly_rev_svc = run_query(f"""
         TO_CHAR(revenue_month, 'Mon YY') AS label,
         revenue_month,
         service_line,
-        SUM(revenue_amount)/1e6 AS rev_m
+        SUM(sales_amount)/1e6 AS rev_m
     FROM gold.fact_revenue
     WHERE revenue_order_date BETWEEN '{start}' AND '{end}'
     GROUP BY revenue_month, service_line
@@ -201,7 +201,7 @@ b_net  = b_gp - b_opex
 # ─── Row 1: Primary KPIs ──────────────────────────────────────────────────────
 section_title("KEY PERFORMANCE INDICATORS")
 kpi_help = {
-    "REVENUE":         "Total order value (DAASH + GoSource) for delivered orders in the period. Source: gold.fact_revenue → revenue_amount",
+    "SALES":           "Total order value (DAASH + GoSource) for delivered orders in the period. Source: gold.fact_revenue → sales_amount",
     "GROSS PROFIT":    "DAASH: platform fee from revenue ledger per delivered order. GoSource: service charge on credit orders. Source: gold.fact_profitability → profit_gross_profit_amount",
     "GROSS MARGIN":    "Gross Profit ÷ Revenue × 100. pp = percentage points vs previous period.",
     "DAASH ORDERS":    "Delivered DAASH orders in the period. Includes direct (Transfer/Card/Cash) and aggregator (Chowdeck/Glovo) channels. Source: gold.fact_revenue WHERE service_line='DAASH'",
@@ -211,7 +211,7 @@ kpi_help = {
 }
 cols = st.columns(6)
 kpis = [
-    ("REVENUE",         naira(curr_revenue),      _delta(curr_revenue,       prev_revenue),       "up",   "💰"),
+    ("SALES",           naira(curr_revenue),      _delta(curr_revenue,       prev_revenue),       "up",   "💰"),
     ("GROSS PROFIT",    naira(curr_gp),            _delta(curr_gp,            prev_gp),            "up",   "📊"),
     ("GROSS MARGIN",    pct(curr_margin),          curr_margin - prev_margin if prev_margin else None, "up", "📈"),
     ("DAASH ORDERS",    count(curr_daash_orders),  _delta(curr_daash_orders,  prev_daash_orders),  "up",   "🍔"),

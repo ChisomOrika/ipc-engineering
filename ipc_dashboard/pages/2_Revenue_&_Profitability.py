@@ -27,13 +27,13 @@ def _profit(s, e):
     return run_query(f"""
         SELECT
             service_line,
-            COALESCE(SUM(profit_revenue_amount), 0)                                AS revenue,
+            COALESCE(SUM(profit_sales_amount), 0)                                AS revenue,
             COALESCE(SUM(NULLIF(profit_cogs_amount, 'NaN'::numeric)), 0)           AS cogs,
             COALESCE(SUM(NULLIF(profit_gross_profit_amount, 'NaN'::numeric)), 0)   AS gp,
-            CASE WHEN SUM(profit_revenue_amount) > 0
+            CASE WHEN SUM(profit_sales_amount) > 0
                  THEN ROUND((
                      COALESCE(SUM(NULLIF(profit_gross_profit_amount, 'NaN'::numeric)), 0)
-                     / SUM(profit_revenue_amount) * 100)::numeric, 1)
+                     / SUM(profit_sales_amount) * 100)::numeric, 1)
                  ELSE 0 END                                                         AS margin_pct,
             COUNT(DISTINCT profit_order_id)                                         AS orders
         FROM gold.fact_profitability
@@ -68,11 +68,11 @@ monthly_pnl = run_query(f"""
         TO_CHAR(profit_month, 'Mon YY')      AS label,
         profit_month,
         service_line,
-        COALESCE(SUM(profit_revenue_amount), 0)/1e6                                        AS revenue_m,
+        COALESCE(SUM(profit_sales_amount), 0)/1e6                                        AS revenue_m,
         COALESCE(SUM(NULLIF(profit_gross_profit_amount, 'NaN'::numeric)), 0)/1e6           AS gp_m,
-        CASE WHEN SUM(profit_revenue_amount) > 0
+        CASE WHEN SUM(profit_sales_amount) > 0
              THEN ROUND((COALESCE(SUM(NULLIF(profit_gross_profit_amount, 'NaN'::numeric)), 0)
-                        / SUM(profit_revenue_amount) * 100)::numeric, 1)
+                        / SUM(profit_sales_amount) * 100)::numeric, 1)
              ELSE 0 END                                                                     AS margin_pct
     FROM gold.fact_profitability
     WHERE profit_date BETWEEN '{start}' AND '{end}'
@@ -87,7 +87,7 @@ mom_growth = run_query(f"""
         SELECT
             revenue_month,
             TO_CHAR(revenue_month, 'Mon YY') AS label,
-            SUM(revenue_amount)/1e6 AS rev_m
+            SUM(sales_amount)/1e6 AS rev_m
         FROM gold.fact_revenue
         WHERE revenue_order_date BETWEEN '{start}' AND '{end}'
         {svc_clause}
@@ -111,10 +111,10 @@ top_customers = run_query(f"""
     SELECT
         COALESCE(NULLIF(TRIM(profit_customer_name),''), 'Unknown') AS customer,
         service_line,
-        SUM(profit_revenue_amount)      AS revenue,
+        SUM(profit_sales_amount)      AS revenue,
         SUM(profit_gross_profit_amount) AS gp,
         COUNT(DISTINCT profit_order_id) AS orders,
-        ROUND((SUM(profit_gross_profit_amount)/NULLIF(SUM(profit_revenue_amount),0)*100)::numeric,1) AS margin_pct
+        ROUND((SUM(profit_gross_profit_amount)/NULLIF(SUM(profit_sales_amount),0)*100)::numeric,1) AS margin_pct
     FROM gold.fact_profitability
     WHERE profit_date BETWEEN '{start}' AND '{end}'
       AND profit_customer_name IS NOT NULL
