@@ -49,10 +49,16 @@ cash_kpi = run_query(f"""
     ),
     burn AS (
         SELECT
-            COALESCE(SUM(daily_outflow_amount) / NULLIF(COUNT(*), 0), 0) AS avg_daily_burn,
-            COALESCE(SUM(daily_outflow_amount) / NULLIF(COUNT(*), 0), 0) * 30 AS avg_monthly_burn
+            COALESCE(SUM(CASE WHEN cash_position_date >= CURRENT_DATE - 21
+                              THEN daily_outflow_amount END)
+                     / NULLIF(SUM(CASE WHEN cash_position_date >= CURRENT_DATE - 21
+                                       THEN 1 END), 0), 0) AS avg_daily_burn,
+            COALESCE(SUM(CASE WHEN cash_position_date >= CURRENT_DATE - 90
+                              THEN daily_outflow_amount END)
+                     / NULLIF(SUM(CASE WHEN cash_position_date >= CURRENT_DATE - 90
+                                       THEN 1 END), 0), 0) AS avg_daily_burn_90d
         FROM gold.fact_cash_position
-        WHERE cash_position_date >= CURRENT_DATE - INTERVAL '90 days'
+        WHERE cash_position_date >= CURRENT_DATE - 90
     )
     SELECT
         real_balance.balance - after_period.net_after                           AS closing_balance,
@@ -61,7 +67,8 @@ cash_kpi = run_query(f"""
         flows.inflow, flows.outflow, flows.net,
         flows.prev_inflow, flows.prev_outflow,
         burn.avg_daily_burn,
-        burn.avg_monthly_burn
+        burn.avg_daily_burn * 30 AS avg_monthly_burn,
+        burn.avg_daily_burn_90d
     FROM real_balance, after_period, flows, burn
 """)
 
@@ -186,11 +193,12 @@ current_balance = _v(cash_kpi, "current_balance")
 inflow          = _v(cash_kpi, "inflow")
 outflow         = _v(cash_kpi, "outflow")
 net             = _v(cash_kpi, "net")
-avg_daily_burn  = _v(cash_kpi, "avg_daily_burn")
+avg_daily_burn   = _v(cash_kpi, "avg_daily_burn")
 avg_monthly_burn = _v(cash_kpi, "avg_monthly_burn")
-prev_inflow     = _v(cash_kpi, "prev_inflow")
-prev_outflow    = _v(cash_kpi, "prev_outflow")
-runway_days     = (current_balance / avg_daily_burn) if avg_daily_burn > 0 else None
+avg_daily_burn_90d = _v(cash_kpi, "avg_daily_burn_90d")
+prev_inflow      = _v(cash_kpi, "prev_inflow")
+prev_outflow     = _v(cash_kpi, "prev_outflow")
+runway_days      = (current_balance / avg_daily_burn) if avg_daily_burn > 0 else None
 
 # ══════════════════════════════════════════════════════════════════════════════
 # (a) CASH POSITION
@@ -222,9 +230,9 @@ c6.metric("📉 Period Outflows", naira(outflow),
                  if _delta(outflow, prev_outflow) is not None else None),
           delta_color="inverse")
 c7.metric("🔥 Avg Daily Burn", naira(avg_daily_burn),
-          delta=f"~{naira(avg_monthly_burn)}/mo",
+          delta=f"~{naira(avg_monthly_burn)}/mo · 90d: {naira(avg_daily_burn_90d)}/day",
           delta_color="off",
-          help="Average daily outflow over the last 90 days (Lenco debits). Includes zero-outflow days for honest averaging.")
+          help="Average daily outflow over the last 21 days (Lenco debits). 90d trailing shown for comparison.")
 c8.metric("⏳ Cash Runway", f"{runway_days:.0f} days" if runway_days else "N/A",
           help="Current Lenco balance ÷ avg daily burn (90-day average). Based on Lenco account only.")
 
@@ -432,10 +440,10 @@ section_title("(E) LIQUIDITY & CASH RUNWAY")
 lq1, lq2, lq3 = st.columns(3)
 lq1.metric("🏦 Lenco Account Balance", naira(current_balance),
            help="Live balance from Lenco API. This is the Providus bank account balance.")
-lq2.metric("🔥 Avg Daily Burn", naira(avg_daily_burn),
-           delta=f"~{naira(avg_monthly_burn)}/mo",
+lq2.metric("🔥 Avg Daily Burn (21d)", naira(avg_daily_burn),
+           delta=f"90d trailing: {naira(avg_daily_burn_90d)}/day",
            delta_color="off",
-           help="Average daily outflow over the last 90 days (Lenco debits). Includes zero-outflow days.")
+           help="Average daily outflow over the last 21 days. 90-day trailing shown for comparison.")
 lq3.metric("⏳ Lenco Runway", f"{runway_days:.0f} days" if runway_days else "N/A",
            help="Current Lenco balance ÷ avg daily burn (90-day average). "
                 "Note: this reflects the Lenco account only — not 9japay or other balances.")

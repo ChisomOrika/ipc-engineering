@@ -94,10 +94,16 @@ kpi = run_query(f"""
     ),
     burn AS (
         SELECT
-            COALESCE(SUM(daily_outflow_amount) / NULLIF(COUNT(*), 0), 0) AS avg_daily_burn,
-            COALESCE(SUM(daily_outflow_amount) / NULLIF(COUNT(*), 0), 0) * 30 AS avg_monthly_burn
+            COALESCE(SUM(CASE WHEN cash_position_date >= CURRENT_DATE - 21
+                              THEN daily_outflow_amount END)
+                     / NULLIF(SUM(CASE WHEN cash_position_date >= CURRENT_DATE - 21
+                                       THEN 1 END), 0), 0) AS avg_daily_burn,
+            COALESCE(SUM(CASE WHEN cash_position_date >= CURRENT_DATE - 90
+                              THEN daily_outflow_amount END)
+                     / NULLIF(SUM(CASE WHEN cash_position_date >= CURRENT_DATE - 90
+                                       THEN 1 END), 0), 0) AS avg_daily_burn_90d
         FROM gold.fact_cash_position
-        WHERE cash_position_date >= CURRENT_DATE - INTERVAL '90 days'
+        WHERE cash_position_date >= CURRENT_DATE - 90
     ),
     real_balance AS (
         SELECT account_current_balance_amount::numeric AS balance
@@ -113,7 +119,7 @@ kpi = run_query(f"""
         exp.curr_exp,    exp.prev_exp,
         cash.cash_balance,
         ar.total_ar,     ar.ar_count,
-        burn.avg_daily_burn, burn.avg_monthly_burn,
+        burn.avg_daily_burn, burn.avg_daily_burn * 30 AS avg_monthly_burn, burn.avg_daily_burn_90d,
         real_balance.balance AS current_balance
     FROM rev, prof, exp, cash, ar, burn, real_balance
 """)
@@ -186,10 +192,11 @@ prev_expenses = _v(kpi, "prev_exp")
 cash          = _v(kpi, "cash_balance")
 total_ar      = _v(kpi, "total_ar")
 ar_count      = int(_v(kpi, "ar_count"))
-avg_daily_burn  = _v(kpi, "avg_daily_burn")
+avg_daily_burn   = _v(kpi, "avg_daily_burn")
 avg_monthly_burn = _v(kpi, "avg_monthly_burn")
-current_balance = _v(kpi, "current_balance")
-runway_days     = (current_balance / avg_daily_burn) if avg_daily_burn > 0 else None
+avg_daily_burn_90d = _v(kpi, "avg_daily_burn_90d")
+current_balance  = _v(kpi, "current_balance")
+runway_days      = (current_balance / avg_daily_burn) if avg_daily_burn > 0 else None
 
 aov_curr = curr_revenue / curr_orders if curr_orders > 0 else 0
 aov_prev = prev_revenue / prev_orders if prev_orders > 0 else 0
@@ -246,13 +253,13 @@ c1, c2, c3 = st.columns(3)
 
 with c1:
     st.metric(
-        "🔥 AVG DAILY BURN",
+        "🔥 AVG DAILY BURN (21d)",
         naira(avg_daily_burn),
-        delta=f"~{naira(avg_monthly_burn)}/mo",
+        delta=f"90d: {naira(avg_daily_burn_90d)}/day",
         delta_color="off",
         help=(
-            "Average daily outflow over the last 90 days (Lenco debits). "
-            "Includes zero-outflow days for honest averaging. "
+            "Average daily outflow over the last 21 days (Lenco debits). "
+            "90-day trailing shown for comparison. "
             "Source: gold.fact_cash_position"
         )
     )
