@@ -89,12 +89,24 @@ def warehouse_conn():
 def warehouse_totals(table: str, date_col: str, day: str) -> dict:
     """Count + amount sum for a single UTC day in the warehouse."""
     sql = f"""
-        select count(*)::bigint, coalesce(sum(transaction_amount), 0)::numeric
+        select count(*)::bigint, coalesce(sum(transaction_amount::numeric), 0)::numeric
         from {table}
         where {date_col}::date = %s
     """
     with warehouse_conn() as conn, conn.cursor() as cur:
         cur.execute(sql, (day,))
+        n, total = cur.fetchone()
+    return {"count": int(n), "total_amount": float(total or 0)}
+
+
+def warehouse_alltime(table: str) -> dict:
+    """Count + amount sum across all time — used where source API only exposes summary totals."""
+    sql = f"""
+        select count(*)::bigint, coalesce(sum(transaction_amount::numeric), 0)::numeric
+        from {table}
+    """
+    with warehouse_conn() as conn, conn.cursor() as cur:
+        cur.execute(sql)
         n, total = cur.fetchone()
     return {"count": int(n), "total_amount": float(total or 0)}
 
@@ -134,86 +146,90 @@ def paystack_totals(day: str) -> dict:
     return {"count": count, "total_amount": total_kobo / 100.0}  # naira
 
 
-def lenco_totals(day: str) -> dict:
-    """Pull Lenco transactions for a single day."""
-    headers = {"Authorization": os.environ["LENCO_API_TOKEN"]}
-    start = f"{day}T00:00:00.000Z"
-    end = f"{day}T23:59:59.999Z"
+def lenco_alltime_summary(_day: str) -> dict:
+    """Lenco: pull a tiny page, read all-time totals from response meta.
 
-    count = 0
-    total = 0.0
-    page = 1
-    while True:
-        r = HTTP.get(
-            "https://api.lenco.ng/access/v1/transactions",
-            headers=headers,
-            params={"from": start, "to": end, "perPage": 100, "page": page},
-            timeout=TIMEOUT,
-        )
-        r.raise_for_status()
-        body = r.json()
-        rows = (body.get("data") or {}).get("transactions") or body.get("data") or []
-        if not rows:
-            break
-        count += len(rows)
-        total += sum(float(t.get("amount", 0) or 0) for t in rows)
-        meta = ((body.get("data") or {}).get("meta")) or body.get("meta") or {}
-        if page >= int(meta.get("pageCount", 1) or 1):
-            break
-        page += 1
-
-    return {"count": count, "total_amount": total}
+    Lenco's /transactions response includes data.meta.total (count of all txns).
+    For amount we'd have to paginate every page, so we accept count-only here
+    and rely on warehouse amount as the reference. This is a freshness/completeness
+    check ('does warehouse have all transactions source sees').
+    """
+    r = HTTP.get(
+        "https://api.lenco.ng/access/v1/transactions",
+        headers={"Authorization": os.environ["LENCO_API_TOKEN"]},
+        params={"page": 1, "perPage": 1},
+        timeout=TIMEOUT,
+    )
+    r.raise_for_status()
+    body = r.json()
+    meta = (body.get("data") or {}).get("meta") or {}
+    total = int(meta.get("total", 0))
+    # Amount not available as a summary — marker None means "skip amount diff"
+    return {"count": total, "total_amount": None}
 
 
-def ninepay_totals(day: str) -> dict:
-    """Pull 9japay transactions for a single day."""
-    headers = {
-        "secret": os.environ["9JAPAY_SECRET"],
-        "api-key": os.environ["9JAPAY_API_KEY"],
-    }
-    count = 0
-    total = 0.0
-    page = 1
-    while True:
-        r = HTTP.get(
-            "https://developer.9japay.com/v1/api/transactions",
-            headers=headers,
-            params={"startDate": day, "endDate": day, "limit": 500, "page": page},
-            timeout=TIMEOUT,
-            verify=False,
-        )
-        r.raise_for_status()
-        body = r.json()
-        rows = body.get("data") or body.get("transactions") or []
-        if isinstance(rows, dict):
-            rows = rows.get("transactions") or rows.get("data") or []
-        if not rows:
-            break
-        count += len(rows)
-        total += sum(float(t.get("amount", 0) or 0) for t in rows)
-        if len(rows) < 500:
-            break
-        page += 1
+def ninepay_alltime_summary(_day: str) -> dict:
+    """9japay: response includes top-level totalCount + totalCreditSum.
 
-    return {"count": count, "total_amount": total}
+    Note: 9japay returns separate credit and debit entries for each transaction;
+    totalCount counts both. The warehouse stores both entries too (verified:
+    warehouse ~81k rows matches API totalCount ~81k), so no dedup needed.
+    """
+    r = HTTP.get(
+        "https://developer.9japay.com/v1/api/transactions",
+        headers={
+            "secret":  os.environ["9JAPAY_SECRET"],
+            "api-key": os.environ["9JAPAY_API_KEY"],
+        },
+        params={"page-number": 1, "page-size": 1},
+        timeout=TIMEOUT,
+        verify=False,
+    )
+    r.raise_for_status()
+    body = r.json()
+    # totalCreditSum and totalDebitSum are equal (ledger self-balances).
+    # Use credit side to match one row per "transaction amount" — but since
+    # warehouse stores BOTH sides, we double it to match scale.
+    total_count  = int(body.get("totalCount") or 0)
+    credit_sum   = float(body.get("totalCreditSum") or 0)
+    debit_sum    = float(body.get("totalDebitSum") or 0)
+    return {"count": total_count, "total_amount": credit_sum + debit_sum}
 
 
 # ---------------------------------------------------------------------------
 # Source registry: name → (source puller, warehouse table, warehouse date col)
 # ---------------------------------------------------------------------------
 
+# Each source's recon shape:
+#   mode 'daily'   — per-day count+sum compared to warehouse date slice
+#   mode 'alltime' — count+sum (or count only) compared to warehouse total
+#
+# Daily catches fresh-data issues the fastest; all-time catches long-run drift
+# (missing historical rows). Both are useful signals. Source's native API
+# capability determines which we use.
 SOURCES = {
-    "paystack": (paystack_totals, "bv.bv_paystack_transactions", "transaction_created_at_date_time"),
+    "paystack": {
+        "mode":     "daily",
+        "puller":   paystack_totals,
+        "table":    "bv.bv_paystack_transactions",
+        "date_col": "transaction_created_at_date_time",
+    },
+    "lenco": {
+        "mode":     "alltime",
+        "puller":   lenco_alltime_summary,
+        "table":    "bv.bv_lenco_transactions",
+        "note":     "API summary exposes total count only (not amount). Amount diff skipped.",
+    },
+    "9japay": {
+        "mode":     "alltime",
+        "puller":   ninepay_alltime_summary,
+        "table":    "bv.bv_9japay_transactions",
+        "note":     "9japay ledger returns credit+debit rows; summed accordingly.",
+    },
 }
 
-# Sources whose APIs don't support per-day date filtering with the params we
-# tried. The ingestion scripts pull all-time and incrementally dedupe on the
-# warehouse side. To reconcile these we need a different approach (weekly
-# total-volume comparison, or pulling recent pages and filtering client-side).
-# Tracked in agents/shared/tasks/active-focus.md.
 DISABLED_SOURCES = {
-    "lenco":  "API ignores from/to params; need recent-page-pull + client-side filter approach",
-    "9japay": "API uses page-size/page-number, no date filter — same pattern needed",
+    # Dash + GoSource (MongoDB) planned next.
 }
 
 
@@ -226,45 +242,55 @@ def compare(source: dict, warehouse: dict) -> dict:
     s_amt, w_amt     = source["total_amount"], warehouse["total_amount"]
 
     count_diff = w_count - s_count
-    amt_diff   = w_amt - s_amt
+    count_pct  = (abs(count_diff) / s_count) if s_count else (1.0 if w_count else 0.0)
+    count_ok   = count_pct <= TOLERANCE
 
-    # Avoid divide-by-zero. Treat empty source as match-only-if-warehouse-empty.
-    count_pct = (abs(count_diff) / s_count) if s_count else (1.0 if w_count else 0.0)
-    amt_pct   = (abs(amt_diff)   / s_amt)   if s_amt   else (1.0 if w_amt else 0.0)
+    # Amount may be None when the source API doesn't expose it as a summary.
+    if s_amt is None:
+        amt_diff, amt_pct, amount_ok = None, None, True  # skip amount check
+    else:
+        amt_diff = w_amt - s_amt
+        amt_pct  = (abs(amt_diff) / s_amt) if s_amt else (1.0 if w_amt else 0.0)
+        amount_ok = amt_pct <= TOLERANCE
 
-    matched = count_pct <= TOLERANCE and amt_pct <= TOLERANCE
     return {
-        "matched": matched,
-        "count_diff": count_diff,
-        "count_pct": count_pct,
+        "matched":     count_ok and amount_ok,
+        "count_diff":  count_diff,
+        "count_pct":   count_pct,
         "amount_diff": amt_diff,
-        "amount_pct": amt_pct,
+        "amount_pct":  amt_pct,
     }
 
 
 def reconcile_source(name: str, day: str) -> dict:
-    puller, table, date_col = SOURCES[name]
-    log.info(f"[{name}] pulling source for {day}…")
+    cfg = SOURCES[name]
+    mode = cfg["mode"]
+    log.info(f"[{name}] pulling source ({mode})…")
     try:
-        src = puller(day)
+        src = cfg["puller"](day)
     except Exception as e:
         log.exception(f"[{name}] source pull failed")
-        return {"source": name, "day": day, "error": f"source pull failed: {e}"}
+        return {"source": name, "day": day, "mode": mode, "error": f"source pull failed: {e}"}
 
-    log.info(f"[{name}] querying warehouse {table} for {day}…")
+    log.info(f"[{name}] querying warehouse {cfg['table']} ({mode})…")
     try:
-        wh = warehouse_totals(table, date_col, day)
+        if mode == "daily":
+            wh = warehouse_totals(cfg["table"], cfg["date_col"], day)
+        else:
+            wh = warehouse_alltime(cfg["table"])
     except Exception as e:
         log.exception(f"[{name}] warehouse query failed")
-        return {"source": name, "day": day, "error": f"warehouse query failed: {e}",
-                "source_totals": src}
+        return {"source": name, "day": day, "mode": mode,
+                "error": f"warehouse query failed: {e}", "source_totals": src}
 
     return {
-        "source": name,
-        "day": day,
-        "source_totals": src,
+        "source":           name,
+        "day":              day,
+        "mode":             mode,
+        "note":             cfg.get("note"),
+        "source_totals":    src,
         "warehouse_totals": wh,
-        "comparison": compare(src, wh),
+        "comparison":       compare(src, wh),
     }
 
 
@@ -298,11 +324,20 @@ def render_markdown(results: list, day: str) -> str:
 
         s, w, c = r["source_totals"], r["warehouse_totals"], r["comparison"]
         status = "✅ MATCH" if c["matched"] else "⚠️ MISMATCH"
-        lines.append(f"- {status}")
-        lines.append(f"- Source:    {s['count']:>6,} txns   ₦{s['total_amount']:>16,.2f}")
-        lines.append(f"- Warehouse: {w['count']:>6,} txns   ₦{w['total_amount']:>16,.2f}")
-        lines.append(f"- Diff:      {c['count_diff']:>+6,} txns   ₦{c['amount_diff']:>+16,.2f}  "
-                     f"({c['count_pct']*100:.2f}% / {c['amount_pct']*100:.2f}%)")
+        mode   = r.get("mode", "daily")
+        lines.append(f"- {status}  ({mode})")
+        if r.get("note"):
+            lines.append(f"- _note: {r['note']}_")
+
+        def _amt(v):
+            return f"₦{v:>18,.2f}" if v is not None else " (not compared)    "
+
+        lines.append(f"- Source:    {s['count']:>8,} txns   {_amt(s['total_amount'])}")
+        lines.append(f"- Warehouse: {w['count']:>8,} txns   {_amt(w['total_amount'])}")
+        amt_diff_str = (f"₦{c['amount_diff']:>+18,.2f}  ({c['amount_pct']*100:.2f}%)"
+                        if c["amount_diff"] is not None else "(amount skipped)")
+        lines.append(f"- Diff:      {c['count_diff']:>+8,} txns   {amt_diff_str}  "
+                     f"[count {c['count_pct']*100:.2f}%]")
         lines.append("")
 
     return "\n".join(lines)
