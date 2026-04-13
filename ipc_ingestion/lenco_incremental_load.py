@@ -310,21 +310,32 @@ def fetch_paginated(
             log.info(f"[{table_name}] No records on page {page}. Done.")
             break
 
-        # Client-side date filter + early exit (API may not honour startDate)
+        # Client-side date filter + early exit (API may not honour startDate).
+        # Records with a NULL timestamp are kept (upsert on id handles dedup) —
+        # dropping them silently caused a 125-txn drift vs source (see
+        # agents/shared/notes/findings/2026-04-13-lenco-drift-investigation.md).
         if from_date and timestamp_col:
             new_records = []
             old_count   = 0
+            null_ts_count = 0
             for rec in records:
                 ts = parse_ts(rec.get(timestamp_col))
-                if ts is not None and ts >= from_date:
+                if ts is None:
+                    new_records.append(rec)
+                    null_ts_count += 1
+                elif ts >= from_date:
                     new_records.append(rec)
                 else:
                     old_count += 1
-            log.info(f"[{table_name}] Page {page}/{page_count}: {len(new_records)} in window, {old_count} older")
+            log.info(f"[{table_name}] Page {page}/{page_count}: {len(new_records)} in window "
+                     f"(incl. {null_ts_count} null-ts), {old_count} older")
             all_data.extend(new_records)
-            # Newest-first: if ALL records on this page are older than from_date, stop
-            if old_count == len(records):
-                log.info(f"[{table_name}] All records on page {page} are older than {from_date.date()}. Stopping early.")
+            # Newest-first: if every non-null-ts record on this page is older
+            # than from_date, stop. Null-ts records don't gate early-exit
+            # since they could be anywhere chronologically.
+            non_null = len(records) - null_ts_count
+            if non_null > 0 and old_count == non_null:
+                log.info(f"[{table_name}] All dated records on page {page} are older than {from_date.date()}. Stopping early.")
                 break
         else:
             all_data.extend(records)
