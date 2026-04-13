@@ -11,6 +11,16 @@
   - Next: build `brand_match_overrides` table (~30 min manual review) to catch false negatives like "Hot Wings"/"Hot Wingz", "Urban Bites"/"Urban Eats Cloud Kitchen"
   - Next: Streamlit page on top of this, OR direct CSV to whoever owns cross-sell
 
+## Trust Layer (in progress)
+- ✅ Reconciliation framework shipped at `recon/reconcile.py` (2026-04-13)
+- ✅ Paystack reconciliation working end-to-end — 24 txns / ₦390,700 matched exactly on first run
+- ✅ Daily GitHub Actions workflow `.github/workflows/recon-daily.yml` (06:00 Lagos)
+- ✅ Email failure alert added to ingestion pipeline workflow
+- ⏸️ Lenco recon — API ignores from/to params, returned 16K all-time txns. Need recent-page + client-side filter approach
+- ⏸️ 9japay recon — API uses page-size/page-number, no date filter. Same approach as Lenco
+- ⏸️ Dash + GoSource (MongoDB) — different puller shape needed
+- 🔴 **TODO before workflow runs in CI**: add to GitHub repo secrets — `SMTP_USER`, `SMTP_PASSWORD` (gmail app password), `SMTP_TO`. Without these, the workflow runs but doesn't email — only prints + uploads report artifact.
+
 ## Next Up (after #3 validates)
 - **Build #5: Win-Back CSV** — weekly export per brand of customers inactive 14/30/60 days. Practical only if a human owner is identified to send the WhatsApp messages — confirm with whoever runs Brand Success / GoSource account management before building.
 - **Build #1: Brand Activation Score** — composite score per DAASH brand. Define "activated" as a measurable outcome FIRST (e.g. ≥X online orders/month for ≥Y consecutive months), then weight inputs against it. Don't ship a hand-wavy weighted average.

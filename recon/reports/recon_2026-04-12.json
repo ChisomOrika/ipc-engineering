@@ -1,0 +1,34 @@
+{
+  "day": "2026-04-12",
+  "results": [
+    {
+      "source": "paystack",
+      "day": "2026-04-12",
+      "source_totals": {
+        "count": 24,
+        "total_amount": 390700.0
+      },
+      "warehouse_totals": {
+        "count": 24,
+        "total_amount": 390700.0
+      },
+      "comparison": {
+        "matched": true,
+        "count_diff": 0,
+        "count_pct": 0.0,
+        "amount_diff": 0.0,
+        "amount_pct": 0.0
+      }
+    },
+    {
+      "source": "lenco",
+      "day": "2026-04-12",
+      "skipped": "API ignores from/to params; need recent-page-pull + client-side filter approach"
+    },
+    {
+      "source": "9japay",
+      "day": "2026-04-12",
+      "skipped": "API uses page-size/page-number, no date filter \u2014 same pattern needed"
+    }
+  ]
+}

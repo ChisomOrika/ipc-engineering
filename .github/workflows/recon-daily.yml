@@ -1,0 +1,41 @@
+name: Daily reconciliation
+
+on:
+  schedule:
+    - cron: '0 5 * * *'   # 05:00 UTC = 06:00 Lagos
+  workflow_dispatch:
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install deps
+        run: pip install -r recon/requirements.txt
+
+      - name: Run reconciliation
+        env:
+          PG_HOST:             ${{ secrets.PG_HOST }}
+          PG_PORT:             ${{ secrets.PG_PORT }}
+          PG_USER:             ${{ secrets.PG_USER }}
+          PG_PASSWORD:         ${{ secrets.PG_PASSWORD }}
+          PAYSTACK_SECRET_KEY: ${{ secrets.PAYSTACK_SECRET_KEY }}
+          LENCO_API_TOKEN:     ${{ secrets.LENCO_API_TOKEN }}
+          9JAPAY_SECRET:       ${{ secrets.NINEPAY_SECRET }}
+          9JAPAY_API_KEY:      ${{ secrets.NINEPAY_API_KEY }}
+          SMTP_USER:           ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD:       ${{ secrets.SMTP_PASSWORD }}
+          SMTP_TO:             ${{ secrets.SMTP_TO }}
+        run: python recon/reconcile.py
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recon-report
+          path: recon/reports/

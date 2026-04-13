@@ -69,3 +69,23 @@ jobs:
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK
+
+      - name: Notify email on failure
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          subject: "⚠️ IPC ingestion failed — run #${{ github.run_number }}"
+          to: ${{ secrets.SMTP_TO }}
+          from: IPC Pipeline <${{ secrets.SMTP_USER }}>
+          body: |
+            IPC ingestion pipeline failed.
+
+            Workflow: ${{ github.workflow }}
+            Run:      ${{ github.run_number }}
+            Trigger:  ${{ github.event_name }}
+            Logs:     ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
