@@ -33,6 +33,8 @@ models:
         +schema: rv_lenco
       paystack:
         +schema: rv_paystack
+      9japay:
+        +schema: rv_9japay
     bv:
       +materialized: table
       +database: PROD_ANALYTICS_DB
