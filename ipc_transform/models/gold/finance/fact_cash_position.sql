@@ -1,16 +1,13 @@
 {{ config(materialized='table', schema='gold', tags=['Finance', 'CashFlow']) }}
 
 -- Daily closing cash position derived from Lenco running balance
--- Uses the last transaction of each day as the closing balance
+-- Excludes 9japay: virtual account sweeps are internal (credit in = debit out, net zero)
+-- and don't affect the real bank balance (Lenco/Providus)
 with lenco_txns as (
     select
-        transaction_id_pk,
-        transaction_account_id_fk,
         transaction_amount,
         transaction_type,
-        transaction_status,
-        transaction_completed_at_date_time::date    as transaction_date,
-        transaction_completed_at_date_time          as transaction_datetime
+        transaction_completed_at_date_time::date    as transaction_date
     from {{ ref('bv_lenco_transactions') }}
     where transaction_status = 'successful'
       and transaction_completed_at_date_time is not null

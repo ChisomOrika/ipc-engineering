@@ -1,6 +1,6 @@
 {{ config(materialized='table', schema='gold', tags=['Finance', 'Expenses']) }}
 
--- Operational expense breakdown from Lenco debit transactions
+-- Operational expense breakdown from Lenco + 9japay debit transactions
 with lenco_debits as (
     select
         transaction_id_pk,
@@ -9,12 +9,35 @@ with lenco_debits as (
         transaction_amount,
         transaction_fee_amount,
         transaction_reference,
-        transaction_account_id_fk,
-        transaction_completed_at_date_time::date    as transaction_date
+        transaction_account_id_fk                      as transaction_account_id,
+        transaction_completed_at_date_time::date       as transaction_date,
+        'Lenco'                                        as payment_platform
     from {{ ref('bv_lenco_transactions') }}
     where transaction_type   = 'debit'
       and transaction_status = 'successful'
       and transaction_completed_at_date_time is not null
+),
+
+nine_japay_debits as (
+    select
+        transaction_id_pk,
+        transaction_narration,
+        null::text                                     as transaction_category,
+        transaction_amount,
+        null::numeric                                  as transaction_fee_amount,
+        transaction_reference,
+        transaction_account_number                     as transaction_account_id,
+        transaction_date_time::date                    as transaction_date,
+        '9japay'                                       as payment_platform
+    from {{ ref('bv_9japay_transactions') }}
+    where transaction_type = 'debit'
+      and transaction_date_time is not null
+),
+
+all_debits as (
+    select * from lenco_debits
+    union all
+    select * from nine_japay_debits
 )
 
 select
@@ -23,6 +46,7 @@ select
     date_trunc('month', transaction_date)::date                     as expense_month,
     date_trunc('year',  transaction_date)::date                     as expense_year,
     transaction_category                                            as expense_category,
+    payment_platform                                                as expense_platform,
 
     -- High-level grouping for dashboard
     case
@@ -40,6 +64,9 @@ select
              then 'Admin & Compliance'
         when transaction_category in ('Bank Charges', 'Inward Transfer')
              then 'Bank & Finance'
+        when payment_platform = '9japay'
+             and lower(transaction_narration) like '%virtual account closure%'
+             then 'Virtual Account Sweep'
         else 'Uncategorized'
     end                                                             as expense_group,
 
@@ -53,8 +80,8 @@ select
 
     transaction_narration                                           as expense_narration,
     transaction_reference                                           as expense_reference,
-    transaction_account_id_fk                                      as expense_account_id_fk,
+    transaction_account_id                                          as expense_account_id,
     transaction_amount                                              as expense_amount,
     transaction_fee_amount                                          as expense_fee_amount
 
-from lenco_debits
+from all_debits

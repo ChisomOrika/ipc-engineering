@@ -83,6 +83,13 @@ sources:
         description: "Platform activity logs — login, menu edits, order actions per branch/customer."
       - name: websitevisits
         description: "Website visit counts per restaurant sub-website."
+  - name: 9japay_main
+    database: PROD_ANALYTICS_DB
+    schema: raw_9japay
+    tables:
+      - name: transactions
+        description: "9japay virtual account transactions (credits = customer payments in, debits = closure sweeps)."
+
   - name: gosource_main
     database: PROD_ANALYTICS_DB
     schema: raw_gosource

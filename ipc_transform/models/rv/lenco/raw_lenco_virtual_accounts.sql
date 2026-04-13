@@ -1,4 +1,4 @@
-{{ config(materialized='table', enabled=false) }}
+{{ config(materialized='view', enabled=false) }}
 
 with raw_lenco_virtual_accounts as (
     select *

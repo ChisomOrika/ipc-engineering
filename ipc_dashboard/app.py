@@ -217,7 +217,7 @@ kpi_help = {
     "DAASH ORDERS":    "Delivered DAASH orders in the period. Includes direct (Transfer/Card/Cash) and aggregator (Chowdeck/Glovo) channels. Source: gold.fact_revenue WHERE service_line='DAASH'",
     "GOSOURCE ORDERS": "Delivered + paid GoSource orders in the period. Source: gold.fact_revenue WHERE service_line='GoSource'",
     "AVG ORDER VALUE": "Total Revenue ÷ Total Order Count for the period.",
-    "TOTAL EXPENSES":  "Sum of all Lenco bank debits categorised as business expenses. Source: gold.fact_expenses",
+    "TOTAL EXPENSES":  "Sum of all Lenco + 9japay debits categorised as business expenses. Source: gold.fact_expenses",
 }
 cols = st.columns(6)
 kpis = [
@@ -258,7 +258,7 @@ with c1:
         delta=f"90d: {naira(avg_daily_burn_90d)}/day",
         delta_color="off",
         help=(
-            "Average daily outflow over the last 21 days (Lenco debits). "
+            "Average daily outflow over the last 21 days (Lenco + 9japay debits). "
             "90-day trailing shown for comparison. "
             "Source: gold.fact_cash_position"
         )
@@ -266,13 +266,14 @@ with c1:
 
 with c2:
     st.metric(
-        "🏦 LENCO BALANCE",
+        "🏦 CASH BALANCE",
         naira(current_balance),
         delta=f"Runway: {runway_days:.0f} days" if runway_days else "Runway: N/A",
         delta_color="off",
         help=(
             "Live balance from Lenco accounts API (Providus Bank). "
-            "Runway = balance ÷ avg daily burn (90-day average). "
+            "9japay virtual account balances are swept to Lenco daily. "
+            "Runway = balance ÷ avg daily burn (Lenco + 9japay, 90-day average). "
             "Source: bv.bv_lenco_accounts"
         )
     )

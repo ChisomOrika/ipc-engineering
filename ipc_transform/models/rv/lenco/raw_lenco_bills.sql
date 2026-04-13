@@ -1,4 +1,4 @@
-{{ config(materialized='table', enabled=false) }}
+{{ config(materialized='view', enabled=false) }}
 
 with raw_lenco_bills as (
     select *

@@ -36,7 +36,7 @@ daash_orders as (
             nullif(trim(concat(c.customer_first_name, ' ', c.customer_last_name)), '')
         )                                                                   as customer_name,
         o.order_created_at_date_time::date                                  as profit_date,
-        coalesce(o.order_total_price_amount::numeric,    0)                 as revenue_amount,
+        coalesce(o.order_total_price_amount::numeric,    0)                 as sales_amount,
         coalesce(o.order_subtotal_amount::numeric,       0)                 as subtotal_amount,
         coalesce(o.order_delivery_fee_amount::numeric,   0)                 as delivery_fee_amount,
         -- Service charge recorded in ledger (authoritative) or fallback to order field
@@ -64,7 +64,7 @@ gosource_orders as (
         order_unified_customer_id_fk                                        as customer_id,
         order_business_name                                                 as customer_name,
         order_created_at_date                                               as profit_date,
-        coalesce(nullif(order_total_price_amount,    'NaN'::numeric), 0)      as revenue_amount,
+        coalesce(nullif(order_total_price_amount,    'NaN'::numeric), 0)      as sales_amount,
         coalesce(nullif(order_subtotal_amount,       'NaN'::numeric), 0)    as subtotal_amount,
         coalesce(nullif(order_delivery_fee_amount,   'NaN'::numeric), 0)    as delivery_fee_amount,
         coalesce(nullif(order_service_charge_amount, 'NaN'::numeric), 0)    as service_charge_amount,
@@ -90,7 +90,7 @@ select
     profit_date,
     date_trunc('month', profit_date)::date                                  as profit_month,
     date_trunc('year',  profit_date)::date                                  as profit_year,
-    revenue_amount                                                          as profit_revenue_amount,
+    sales_amount                                                            as profit_sales_amount,
     subtotal_amount                                                         as profit_subtotal_amount,
     delivery_fee_amount                                                     as profit_delivery_fee_amount,
     service_charge_amount                                                   as profit_service_charge_amount,
@@ -99,8 +99,8 @@ select
     gross_profit_amount                                                     as profit_gross_profit_amount,
     -- Gross margin % (how much of each ₦ of revenue is profit)
     case
-        when revenue_amount > 0
-        then round((gross_profit_amount / revenue_amount * 100)::numeric, 2)
+        when sales_amount > 0
+        then round((gross_profit_amount / sales_amount * 100)::numeric, 2)
         else 0
     end                                                                     as profit_gross_margin_pct
 from daash_orders
@@ -117,7 +117,7 @@ select
     profit_date,
     date_trunc('month', profit_date)::date                                  as profit_month,
     date_trunc('year',  profit_date)::date                                  as profit_year,
-    revenue_amount                                                          as profit_revenue_amount,
+    sales_amount                                                            as profit_sales_amount,
     subtotal_amount                                                         as profit_subtotal_amount,
     delivery_fee_amount                                                     as profit_delivery_fee_amount,
     service_charge_amount                                                   as profit_service_charge_amount,
@@ -125,8 +125,8 @@ select
     cogs_amount                                                             as profit_cogs_amount,
     gross_profit_amount                                                     as profit_gross_profit_amount,
     case
-        when revenue_amount > 0
-        then round((gross_profit_amount / revenue_amount * 100)::numeric, 2)
+        when sales_amount > 0
+        then round((gross_profit_amount / sales_amount * 100)::numeric, 2)
         else 0
     end                                                                     as profit_gross_margin_pct
 from gosource_orders

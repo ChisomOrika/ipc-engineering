@@ -22,7 +22,7 @@ with daash_orders as (
         o.order_delivery_fee_amount::numeric                                as delivery_fee_amount,
         o.order_service_charge_amount::numeric                              as service_charge_amount,
         o.order_discount::numeric                                           as discount_amount,
-        o.order_total_price_amount::numeric                                 as revenue_amount
+        o.order_total_price_amount::numeric                                 as sales_amount
     from {{ ref('bv_dash_orders') }} o
     left join {{ ref('bv_dash_customers') }} c
         on o.order_customer_id_fk = c.customer_id_pk
@@ -44,7 +44,7 @@ gosource_orders as (
         order_delivery_fee_amount                                           as delivery_fee_amount,
         order_service_charge_amount                                         as service_charge_amount,
         order_discount_amount                                               as discount_amount,
-        order_total_price_amount                                            as revenue_amount
+        order_total_price_amount                                            as sales_amount
     from {{ ref('bv_gosource_orders') }}
     where lower(order_status)         = 'delivered'
       and lower(order_payment_status) = 'paid'
@@ -69,7 +69,7 @@ select
     delivery_fee_amount                                                     as revenue_delivery_fee_amount,
     service_charge_amount                                                   as revenue_service_charge_amount,
     discount_amount                                                         as revenue_discount_amount,
-    revenue_amount
+    sales_amount
 from daash_orders
 
 union all
@@ -92,5 +92,5 @@ select
     delivery_fee_amount                                                     as revenue_delivery_fee_amount,
     service_charge_amount                                                   as revenue_service_charge_amount,
     discount_amount                                                         as revenue_discount_amount,
-    revenue_amount
+    sales_amount
 from gosource_orders
