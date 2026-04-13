@@ -1,0 +1,34 @@
+version: 2
+
+models:
+  - name: dim_brands_cross_platform
+    description: >
+      One row per unique brand across DAASH and GoSource, joined on a normalized
+      business name. Enables analysis of which brands exist on both platforms,
+      cross-sell opportunities, and combined customer value.
+    columns:
+      - name: brand_match_key
+        description: Normalized business name (lowercased, alphanumeric only). The join key.
+        tests:
+          - unique
+          - not_null
+      - name: brand_name
+        description: Display name (preserved from source — DAASH preferred when both exist).
+        tests:
+          - not_null
+      - name: on_dash
+        description: True if brand has a DAASH customer record.
+        tests:
+          - not_null
+      - name: on_gosource
+        description: True if brand has a GoSource customer record.
+        tests:
+          - not_null
+      - name: on_both_platforms
+        description: True if brand exists on DAASH and GoSource. Strategic cross-sell signal.
+        tests:
+          - not_null
+      - name: dash_customer_id
+        description: DAASH customer_id_pk if brand exists on DAASH, else null.
+      - name: gosource_customer_id
+        description: GoSource customer_id_pk if brand exists on GoSource, else null.
