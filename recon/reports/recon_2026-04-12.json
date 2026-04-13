@@ -49,8 +49,8 @@
       "mode": "alltime",
       "note": "9japay ledger returns credit+debit rows; summed accordingly.",
       "source_totals": {
-        "count": 81432,
-        "total_amount": 137208886516.0
+        "count": 81438,
+        "total_amount": 137218986516.0
       },
       "warehouse_totals": {
         "count": 81398,
@@ -58,10 +58,52 @@
       },
       "comparison": {
         "matched": true,
-        "count_diff": -34,
-        "count_pct": 0.0004175262795952451,
-        "amount_diff": -65037364.0,
-        "amount_pct": 0.00047400256391131023
+        "count_diff": -40,
+        "count_pct": 0.0004911711977209657,
+        "amount_diff": -75137364.0,
+        "amount_pct": 0.0005475726494397248
+      }
+    },
+    {
+      "source": "dash",
+      "day": "2026-04-12",
+      "mode": "alltime",
+      "note": "Mongo daash.orders \u2014 count docs + sum totalPrice.",
+      "source_totals": {
+        "count": 435479,
+        "total_amount": 6148237418.48
+      },
+      "warehouse_totals": {
+        "count": 435261,
+        "total_amount": 6144641216.48
+      },
+      "comparison": {
+        "matched": true,
+        "count_diff": -218,
+        "count_pct": 0.0005005981918760721,
+        "amount_diff": -3596202.0,
+        "amount_pct": 0.0005849159287815975
+      }
+    },
+    {
+      "source": "gosource",
+      "day": "2026-04-12",
+      "mode": "alltime",
+      "note": "Mongo ipc_db.orders \u2014 warehouse is exploded per product; dedup on order_id_pk.",
+      "source_totals": {
+        "count": 3452,
+        "total_amount": 1385114579.300838
+      },
+      "warehouse_totals": {
+        "count": 3442,
+        "total_amount": 1379057568.78
+      },
+      "comparison": {
+        "matched": false,
+        "count_diff": -10,
+        "count_pct": 0.0028968713789107765,
+        "amount_diff": -6057010.520838022,
+        "amount_pct": 0.004372931027767688
       }
     }
   ]

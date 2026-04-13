@@ -11,14 +11,16 @@ Sources covered (REST APIs):
     - Lenco
     - 9japay
 
-MongoDB sources (Dash, GoSource) handled in a separate module — different
-query shape.
+MongoDB sources:
+    - Dash     (db: daash,  collection: orders)
+    - GoSource (db: ipc_db, collection: orders)
 
 Environment variables required:
     PG_HOST, PG_PORT, PG_USER, PG_PASSWORD                — warehouse
     PAYSTACK_SECRET_KEY                                   — Paystack
     LENCO_API_TOKEN                                       — Lenco
     9JAPAY_SECRET, 9JAPAY_API_KEY                         — 9japay
+    DASH_URL, GOSOURCE_URL                                — MongoDB
 
 Optional (for email — silent skip if absent):
     SMTP_HOST (default smtp.gmail.com)
@@ -41,6 +43,8 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import psycopg2
+from pymongo import MongoClient
+from bson.decimal128 import Decimal128
 from dotenv import load_dotenv
 
 
@@ -99,12 +103,28 @@ def warehouse_totals(table: str, date_col: str, day: str) -> dict:
     return {"count": int(n), "total_amount": float(total or 0)}
 
 
-def warehouse_alltime(table: str) -> dict:
-    """Count + amount sum across all time — used where source API only exposes summary totals."""
-    sql = f"""
-        select count(*)::bigint, coalesce(sum(transaction_amount::numeric), 0)::numeric
-        from {table}
+def warehouse_alltime(table: str, amount_col: str = "transaction_amount",
+                      dedup_col: str | None = None) -> dict:
+    """Count + amount sum across all time — used where source API only exposes summary totals.
+
+    If ``dedup_col`` is provided, counts DISTINCT ``dedup_col`` and sums the
+    amount once per distinct key (needed for exploded fact tables like
+    ``bv_gosource_orders`` where each order row is duplicated per product).
     """
+    if dedup_col:
+        sql = f"""
+            select count(*)::bigint, coalesce(sum(amt), 0)::numeric from (
+                select {dedup_col} as k,
+                       max({amount_col}::numeric) as amt
+                from {table}
+                group by {dedup_col}
+            ) s
+        """
+    else:
+        sql = f"""
+            select count(*)::bigint, coalesce(sum({amount_col}::numeric), 0)::numeric
+            from {table}
+        """
     with warehouse_conn() as conn, conn.cursor() as cur:
         cur.execute(sql)
         n, total = cur.fetchone()
@@ -197,6 +217,72 @@ def ninepay_alltime_summary(_day: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# MongoDB source pullers (Dash, GoSource)
+# ---------------------------------------------------------------------------
+#
+# Both run all-time: count documents in the `orders` collection and sum the
+# `totalPrice` field. Dash stores totalPrice as int/float; GoSource mixes
+# int/float/Decimal128 depending on when the doc was written. The `$sum`
+# aggregation collapses all three to a single BSON number, but we still
+# guard with _to_float() in case a Decimal128 slips through at the Python
+# boundary (e.g. empty-collection fallbacks).
+
+def _to_float(v) -> float:
+    if v is None:
+        return 0.0
+    if isinstance(v, Decimal128):
+        return float(v.to_decimal())
+    return float(v)
+
+
+def _mongo_orders_summary(uri: str, db_name: str,
+                          amount_field: str = "totalPrice",
+                          collection: str = "orders",
+                          relax_tls: bool = False) -> dict:
+    """Count + amount sum for a Mongo orders collection (all-time)."""
+    kw = {"serverSelectionTimeoutMS": 60000}
+    if relax_tls:
+        # Matches dash_incremental_load.py — Dash's cluster presents a cert
+        # chain our runtime doesn't trust, so we skip hostname+CA validation.
+        kw.update(tls=True, tlsAllowInvalidCertificates=True)
+
+    client = MongoClient(uri, **kw)
+    try:
+        coll = client[db_name][collection]
+        count = coll.count_documents({})
+        agg = list(coll.aggregate(
+            [{"$group": {"_id": None, "total": {"$sum": f"${amount_field}"}}}],
+            allowDiskUse=True,
+        ))
+        total = _to_float(agg[0]["total"]) if agg else 0.0
+    finally:
+        client.close()
+    return {"count": count, "total_amount": total}
+
+
+def dash_alltime_summary(_day: str) -> dict:
+    """Dash: count orders + sum totalPrice across the whole `daash.orders` collection."""
+    return _mongo_orders_summary(
+        uri=os.environ["DASH_URL"],
+        db_name="daash",
+        amount_field="totalPrice",
+        collection="orders",
+        relax_tls=True,
+    )
+
+
+def gosource_alltime_summary(_day: str) -> dict:
+    """GoSource: count orders + sum totalPrice across `ipc_db.orders`."""
+    return _mongo_orders_summary(
+        uri=os.environ["GOSOURCE_URL"],
+        db_name="ipc_db",
+        amount_field="totalPrice",
+        collection="orders",
+        relax_tls=False,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Source registry: name → (source puller, warehouse table, warehouse date col)
 # ---------------------------------------------------------------------------
 
@@ -226,11 +312,26 @@ SOURCES = {
         "table":    "bv.bv_9japay_transactions",
         "note":     "9japay ledger returns credit+debit rows; summed accordingly.",
     },
+    "dash": {
+        "mode":       "alltime",
+        "puller":     dash_alltime_summary,
+        "table":      "bv.bv_dash_orders",
+        "amount_col": "order_total_price_amount",
+        "note":       "Mongo daash.orders — count docs + sum totalPrice.",
+    },
+    "gosource": {
+        "mode":       "alltime",
+        "puller":     gosource_alltime_summary,
+        "table":      "bv.bv_gosource_orders",
+        "amount_col": "order_total_price_amount",
+        # Warehouse table is exploded one-row-per-product, so dedupe by order id
+        # before counting/summing to match the source (one row per order).
+        "dedup_col":  "order_id_pk",
+        "note":       "Mongo ipc_db.orders — warehouse is exploded per product; dedup on order_id_pk.",
+    },
 }
 
-DISABLED_SOURCES = {
-    # Dash + GoSource (MongoDB) planned next.
-}
+DISABLED_SOURCES = {}
 
 
 # ---------------------------------------------------------------------------
@@ -277,7 +378,11 @@ def reconcile_source(name: str, day: str) -> dict:
         if mode == "daily":
             wh = warehouse_totals(cfg["table"], cfg["date_col"], day)
         else:
-            wh = warehouse_alltime(cfg["table"])
+            wh = warehouse_alltime(
+                cfg["table"],
+                amount_col=cfg.get("amount_col", "transaction_amount"),
+                dedup_col=cfg.get("dedup_col"),
+            )
     except Exception as e:
         log.exception(f"[{name}] warehouse query failed")
         return {"source": name, "day": day, "mode": mode,
