@@ -1,11 +1,15 @@
 # Active Focus
 
 ## This Week
-- **Build #3: Cross-Platform Brand View** — `gold/finance/dim_brands_cross_platform.sql` shipped 2026-04-13. Joins DAASH + GoSource brands by normalized business name. Need to:
-  - [ ] Run `dbt build --select dim_brands_cross_platform` against warehouse and inspect output
-  - [ ] Spot-check known overlaps: Papa's Grill, Wings Bistro, Citysubs, Spicy Corner, Ajebo Chops should all show `on_both_platforms = true`
-  - [ ] Note false positives/negatives — flag any need for a `brand_match_overrides` table
-  - [ ] Once validated, write the first short Streamlit page on top of it (or add to `ipc_dashboard`)
+- **Build #3: Cross-Platform Brand View** — ✅ SHIPPED & VALIDATED 2026-04-13.
+  - `gold/dim_brands_cross_platform` live in prod warehouse, all 7 dbt tests pass
+  - 1,328 brands total; 39 on both platforms; 681 DAASH-only; 608 GoSource-only
+  - **₦80M GoSource credit balance sits with brands not on DAASH** — top targets: Eat N' Go (₦34.5M), Food Court (₦22.7M), Tiamo (₦10.6M), Grillshark (₦5.9M)
+  - Full findings: `agents/shared/notes/findings/2026-04-13-cross-platform-validation.md`
+  - Surfaced data quality issue: 14 DAASH brands have duplicate registrations (Papa's Grill = 3 records)
+  - **Tech debt found**: `generate_schema_name.sql` ignores target.schema for custom-schema models — dev target is effectively a no-op. Patch later.
+  - Next: build `brand_match_overrides` table (~30 min manual review) to catch false negatives like "Hot Wings"/"Hot Wingz", "Urban Bites"/"Urban Eats Cloud Kitchen"
+  - Next: Streamlit page on top of this, OR direct CSV to whoever owns cross-sell
 
 ## Next Up (after #3 validates)
 - **Build #5: Win-Back CSV** — weekly export per brand of customers inactive 14/30/60 days. Practical only if a human owner is identified to send the WhatsApp messages — confirm with whoever runs Brand Success / GoSource account management before building.

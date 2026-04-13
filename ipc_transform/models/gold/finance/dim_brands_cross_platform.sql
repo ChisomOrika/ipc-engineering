@@ -14,109 +14,131 @@
 --     - what is each brand's combined value (DAASH GMV + GoSource spend)?
 --     - which DAASH brands could be cross-sold GoSource (and vice versa)?
 --
--- Caveats:
---   1. Match key is normalized business name. Risk of false matches between
---      genuinely different brands with similar names. Mitigation: a manual
---      override table (TODO: brand_match_overrides) can be layered on later.
---   2. Two brands listed under different business names in each system will
---      appear as separate rows — false negatives are also possible. Spot-check
---      against the known overlap (Papa's Grill, Wings Bistro, Citysubs,
---      Spicy Corner, Ajebo Chops) on first build.
+-- Known data quality findings (surfaced, not hidden):
+--   - dash_record_count > 1 means the brand has multiple DAASH customer
+--     records (signed up multiple times). 41+ such cases observed on first
+--     build. Worth a separate cleanup investigation.
+--   - Match key is normalized business name. False matches and false negatives
+--     are both possible:
+--       false +: two genuinely different brands with similar names
+--       false -: same brand under different names, e.g. "Hot Wings" vs
+--                "Hot Wingz", "Urban Bites" vs "Urban Eats Cloud Kitchen Ltd",
+--                "Citysubs" vs "Citysubs Magodo Branch"
+--     Mitigation: a manual brand_match_overrides table can be layered later.
 -- ============================================================================
 
-with daash_brands as (
+with daash_raw as (
 
     select
-        customer_id_pk                                                      as dash_customer_id,
+        customer_id_pk,
         coalesce(
             nullif(trim(customer_business_name), ''),
             nullif(trim(concat(customer_first_name, ' ', customer_last_name)), '')
-        )                                                                   as dash_brand_name,
-        customer_email                                                      as dash_email,
-        customer_phone_number                                               as dash_phone,
-        customer_business_type                                              as dash_business_type,
-        customer_active                                                     as dash_active,
-        customer_created_at_date_time::date                                 as dash_created_date
+        )                                                                   as raw_name,
+        customer_email,
+        customer_phone_number,
+        customer_business_type,
+        customer_active,
+        customer_created_at_date_time::date                                 as created_date
     from {{ ref('bv_dash_customers') }}
-    where customer_business_name is not null
-       or (customer_first_name is not null and customer_last_name is not null)
 
 ),
 
-gosource_brands as (
+daash_keyed as (
 
     select
-        customer_id_pk                                                      as gosource_customer_id,
-        customer_business_name                                              as gosource_brand_name,
-        customer_verified                                                   as gosource_verified,
-        customer_can_buy_on_credit                                          as gosource_credit_eligible,
-        customer_credit_account                                             as gosource_credit_balance
+        regexp_replace(lower(trim(raw_name)), '[^a-z0-9]+', '', 'g')        as brand_match_key,
+        *
+    from daash_raw
+    where raw_name is not null
+
+),
+
+-- Aggregate to one row per match key on the DAASH side.
+-- Picks an arbitrary representative record + counts duplicates.
+daash_agg as (
+
+    select
+        brand_match_key,
+        min(raw_name)                                                       as dash_brand_name,
+        count(*)                                                            as dash_record_count,
+        string_agg(distinct customer_id_pk::text, ',' order by customer_id_pk::text)
+                                                                            as dash_customer_ids,
+        max(customer_email)                                                 as dash_email,
+        max(customer_phone_number)                                          as dash_phone,
+        max(customer_business_type)                                         as dash_business_type,
+        bool_or(customer_active::boolean)                                   as dash_active_any,
+        min(created_date)                                                   as dash_first_created
+    from daash_keyed
+    where length(brand_match_key) >= 3
+    group by 1
+
+),
+
+gosource_raw as (
+
+    select
+        customer_id_pk,
+        customer_business_name                                              as raw_name,
+        customer_verified,
+        customer_can_buy_on_credit,
+        customer_credit_account
     from {{ ref('bv_gosource_customers') }}
-    where customer_business_name is not null
 
 ),
 
--- Normalize: lower, strip non-alphanumeric, collapse whitespace.
--- This is the join key. Display name is preserved separately.
-daash_normalized as (
+gosource_keyed as (
 
     select
-        *,
-        regexp_replace(lower(trim(dash_brand_name)), '[^a-z0-9]+', '', 'g') as brand_match_key
-    from daash_brands
+        regexp_replace(lower(trim(raw_name)), '[^a-z0-9]+', '', 'g')        as brand_match_key,
+        *
+    from gosource_raw
+    where raw_name is not null
 
 ),
 
-gosource_normalized as (
+gosource_agg as (
 
     select
-        *,
-        regexp_replace(lower(trim(gosource_brand_name)), '[^a-z0-9]+', '', 'g') as brand_match_key
-    from gosource_brands
+        brand_match_key,
+        min(raw_name)                                                       as gosource_brand_name,
+        count(*)                                                            as gosource_record_count,
+        string_agg(distinct customer_id_pk::text, ',' order by customer_id_pk::text)
+                                                                            as gosource_customer_ids,
+        bool_or(customer_verified::boolean)                                 as gosource_verified_any,
+        bool_or(customer_can_buy_on_credit::boolean)                        as gosource_credit_eligible_any,
+        sum(customer_credit_account)                                        as gosource_credit_balance_total
+    from gosource_keyed
+    where length(brand_match_key) >= 3
+    group by 1
 
 ),
 
--- Full outer join so we capture brands on either platform or both.
 joined as (
 
     select
         coalesce(d.brand_match_key, g.brand_match_key)                      as brand_match_key,
         coalesce(d.dash_brand_name, g.gosource_brand_name)                  as brand_name,
-        d.dash_customer_id,
-        g.gosource_customer_id,
+        case when d.brand_match_key is not null then true else false end    as on_dash,
+        case when g.brand_match_key is not null then true else false end    as on_gosource,
+        case when d.brand_match_key is not null
+              and g.brand_match_key is not null then true else false end    as on_both_platforms,
+        d.dash_record_count,
+        d.dash_customer_ids,
         d.dash_email,
         d.dash_phone,
         d.dash_business_type,
-        d.dash_active,
-        d.dash_created_date,
-        g.gosource_verified,
-        g.gosource_credit_eligible,
-        g.gosource_credit_balance,
-        case when d.dash_customer_id     is not null then true else false end as on_dash,
-        case when g.gosource_customer_id is not null then true else false end as on_gosource
-    from daash_normalized d
-    full outer join gosource_normalized g
+        d.dash_active_any                                                   as dash_active,
+        d.dash_first_created                                                as dash_created_date,
+        g.gosource_record_count,
+        g.gosource_customer_ids,
+        g.gosource_verified_any                                             as gosource_verified,
+        g.gosource_credit_eligible_any                                      as gosource_credit_eligible,
+        g.gosource_credit_balance_total                                     as gosource_credit_balance
+    from daash_agg d
+    full outer join gosource_agg g
         on d.brand_match_key = g.brand_match_key
-       and length(d.brand_match_key) >= 3   -- guard against empty/very short match keys
 
 )
 
-select
-    brand_match_key,
-    brand_name,
-    on_dash,
-    on_gosource,
-    case when on_dash and on_gosource then true else false end              as on_both_platforms,
-    dash_customer_id,
-    gosource_customer_id,
-    dash_email,
-    dash_phone,
-    dash_business_type,
-    dash_active,
-    dash_created_date,
-    gosource_verified,
-    gosource_credit_eligible,
-    gosource_credit_balance
-from joined
-where brand_match_key is not null
-  and length(brand_match_key) >= 3
+select * from joined
