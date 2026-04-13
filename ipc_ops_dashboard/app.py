@@ -426,13 +426,18 @@ else:
         FROM deduped
     """)
 
-    # Top products
+    # Top products. raw_gosource.orders is exploded one-row-per-product, so
+    # SUM("totalPrice") (order-level) inflates by ~21x. The per-product price
+    # columns (product.totalPrice, product.discountPrice) are mostly NaN in
+    # history, so we can't trust a product-level revenue number. Report what
+    # IS reliable — line item count and total quantity — until upstream price
+    # data is cleaned up. See agents/shared/notes/findings/2026-04-13-gosource-
+    # explosion-audit.md.
     top_products = run_query("""
         SELECT
             "product.name" AS product_name,
             COUNT(*) AS line_items,
-            SUM(CASE WHEN quantity ~ '^[0-9.]+$' THEN quantity::numeric ELSE 1 END) AS quantity,
-            SUM("totalPrice"::numeric) AS total_amount
+            SUM(CASE WHEN quantity ~ '^[0-9.]+$' THEN quantity::numeric ELSE 1 END) AS quantity
         FROM raw_gosource.orders
         WHERE LOWER(status) = 'delivered'
           AND "product.name" IS NOT NULL
@@ -533,10 +538,10 @@ else:
     # ── Top Products ──
     section_title("TOP PERFORMING PRODUCTS")
     if not top_products.empty:
-        tp = top_products[["product_name", "line_items", "total_amount"]].copy()
-        tp.columns = ["Product", "Orders", "Total Amount"]
-        tp["Orders"] = tp["Orders"].fillna(0).astype(int).apply(lambda x: f"{x:,}")
-        tp["Total Amount"] = tp["Total Amount"].fillna(0).apply(lambda x: naira(float(x)))
+        tp = top_products[["product_name", "line_items", "quantity"]].copy()
+        tp.columns = ["Product", "Order Lines", "Total Quantity"]
+        tp["Order Lines"] = tp["Order Lines"].fillna(0).astype(int).apply(lambda x: f"{x:,}")
+        tp["Total Quantity"] = tp["Total Quantity"].fillna(0).astype(float).apply(lambda x: f"{x:,.0f}")
         st.dataframe(tp, use_container_width=True,
                      height=min(500, 40 + len(tp) * 35))
 
