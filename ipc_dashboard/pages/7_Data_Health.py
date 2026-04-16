@@ -184,7 +184,6 @@ else:
     df = pd.DataFrame(rows)
 
     display = df.drop(columns=["_matched"]).reset_index(drop=True).copy()
-    matched_flags = df["_matched"].reset_index(drop=True).tolist()
     display["Source Count"]    = display["Source Count"].apply(
         lambda v: count(v) if v is not None else "—")
     display["Warehouse Count"] = display["Warehouse Count"].apply(
@@ -194,15 +193,7 @@ else:
     display["Amount Diff"]     = display["Amount Diff"].apply(
         lambda v: naira(v) if v is not None else "—")
 
-    def _style_table(d):
-        styles = pd.DataFrame("", index=d.index, columns=d.columns)
-        for i, matched in enumerate(matched_flags):
-            if not matched and i < len(styles):
-                styles.iloc[i, :] = "background-color:#FEF2F2;color:#B91C1C;"
-        return styles
-
-    styled = display.style.apply(_style_table, axis=None)
-    st.dataframe(styled, use_container_width=True, hide_index=True)
+    st.dataframe(display, use_container_width=True, hide_index=True)
 
     # notes
     notes = [r for r in latest["results"] if r.get("note")]
