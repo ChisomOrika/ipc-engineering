@@ -194,15 +194,14 @@ else:
     display["Amount Diff"]     = display["Amount Diff"].apply(
         lambda v: naira(v) if v is not None else "—")
 
-    ncols = len(display.columns)
+    def _style_table(d):
+        styles = pd.DataFrame("", index=d.index, columns=d.columns)
+        for i, matched in enumerate(matched_flags):
+            if not matched and i < len(styles):
+                styles.iloc[i, :] = "background-color:#FEF2F2;color:#B91C1C;"
+        return styles
 
-    def _style(row):
-        idx = row.name
-        matched = matched_flags[idx] if 0 <= idx < len(matched_flags) else True
-        bg = "" if matched else "background-color:#FEF2F2;color:#B91C1C;"
-        return [bg] * ncols
-
-    styled = display.style.apply(_style, axis=1)
+    styled = display.style.apply(_style_table, axis=None)
     st.dataframe(styled, use_container_width=True, hide_index=True)
 
     # notes
