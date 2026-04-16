@@ -183,7 +183,8 @@ else:
         })
     df = pd.DataFrame(rows)
 
-    display = df.drop(columns=["_matched"]).copy()
+    display = df.drop(columns=["_matched"]).reset_index(drop=True).copy()
+    matched_flags = df["_matched"].reset_index(drop=True).tolist()
     display["Source Count"]    = display["Source Count"].apply(
         lambda v: count(v) if v is not None else "—")
     display["Warehouse Count"] = display["Warehouse Count"].apply(
@@ -193,10 +194,13 @@ else:
     display["Amount Diff"]     = display["Amount Diff"].apply(
         lambda v: naira(v) if v is not None else "—")
 
+    ncols = len(display.columns)
+
     def _style(row):
-        matched = df.loc[row.name, "_matched"]
+        idx = row.name
+        matched = matched_flags[idx] if 0 <= idx < len(matched_flags) else True
         bg = "" if matched else "background-color:#FEF2F2;color:#B91C1C;"
-        return [bg] * len(row)
+        return [bg] * ncols
 
     styled = display.style.apply(_style, axis=1)
     st.dataframe(styled, use_container_width=True, hide_index=True)
