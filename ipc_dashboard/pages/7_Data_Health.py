@@ -183,10 +183,6 @@ else:
         })
     df = pd.DataFrame(rows)
 
-    def _style(row):
-        bg = "" if row["_matched"] else "background-color:#FEF2F2;color:#B91C1C;"
-        return [bg] * len(row)
-
     display = df.drop(columns=["_matched"]).copy()
     display["Source Count"]    = display["Source Count"].apply(
         lambda v: count(v) if v is not None else "—")
@@ -197,9 +193,12 @@ else:
     display["Amount Diff"]     = display["Amount Diff"].apply(
         lambda v: naira(v) if v is not None else "—")
 
-    styled = display.style.apply(
-        lambda r: _style(df.loc[r.name]), axis=1
-    )
+    def _style(row):
+        matched = df.loc[row.name, "_matched"]
+        bg = "" if matched else "background-color:#FEF2F2;color:#B91C1C;"
+        return [bg] * len(row)
+
+    styled = display.style.apply(_style, axis=1)
     st.dataframe(styled, use_container_width=True, hide_index=True)
 
     # notes
