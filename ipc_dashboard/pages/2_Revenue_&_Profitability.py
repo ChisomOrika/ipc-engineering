@@ -15,7 +15,7 @@ from utils.periods import sidebar_filters, svc_filter_sql
 st.set_page_config(page_title="Revenue · IPC", page_icon="📈", layout="wide")
 inject_css()
 
-start, end, prev_start, prev_end, period_label, service_lines = sidebar_filters(extra_filters=True)
+start, end, prev_start, prev_end, period_label, service_lines, _ = sidebar_filters(extra_filters=True)
 svc_clause = svc_filter_sql(service_lines)
 
 page_header("Revenue & Profitability",

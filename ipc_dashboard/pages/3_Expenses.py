@@ -14,7 +14,7 @@ from utils.periods import sidebar_filters
 st.set_page_config(page_title="Expenses · IPC", page_icon="💸", layout="wide")
 inject_css()
 
-start, end, prev_start, prev_end, period_label, _ = sidebar_filters()
+start, end, prev_start, prev_end, period_label, _, business_unit = sidebar_filters()
 
 page_header("Cost Management & Expenses",
             f"{period_label} · Lenco Bank Debits")

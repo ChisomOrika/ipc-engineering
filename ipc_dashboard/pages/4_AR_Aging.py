@@ -15,7 +15,7 @@ from utils.periods import sidebar_filters
 st.set_page_config(page_title="AR Aging · IPC", page_icon="📋", layout="wide")
 inject_css()
 
-_, _, _, _, _, _ = sidebar_filters()   # Keep sidebar consistent
+_ = sidebar_filters()   # Keep sidebar consistent
 
 page_header("Accounts Receivable — Aging Analysis",
             f"GoSource Credit Orders · Current Outstanding as of {dt.date.today().strftime('%d %b %Y')}")

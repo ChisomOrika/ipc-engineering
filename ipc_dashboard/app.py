@@ -24,7 +24,7 @@ st.set_page_config(
 )
 inject_css()
 
-start, end, prev_start, prev_end, period_label, _ = sidebar_filters()
+start, end, prev_start, prev_end, period_label, _, business_unit = sidebar_filters()
 
 page_header(
     "IPC Group — Overview",
@@ -107,7 +107,7 @@ kpi = run_query(f"""
     ),
     real_balance AS (
         SELECT COALESCE(SUM(account_current_balance_amount::numeric), 0) AS balance
-        FROM bv.bv_lenco_accounts
+        FROM gold.dim_lenco_accounts
     )
     SELECT
         rev.curr_rev,    rev.curr_orders,

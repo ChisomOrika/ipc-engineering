@@ -10,12 +10,13 @@ from utils.fmt     import naira, pct, count
 from utils.styles  import (inject_css, page_header, section_title,
                             CHART_LAYOUT, COLOR_POSITIVE, COLOR_NEGATIVE,
                             COLOR_CASH, COLOR_DAASH, COLOR_GOSOURCE)
-from utils.periods import sidebar_filters
+from utils.periods import sidebar_filters, bu_filter_sql
 
 st.set_page_config(page_title="Cash Flow · IPC", page_icon="💰", layout="wide")
 inject_css()
 
-start, end, prev_start, prev_end, period_label, _ = sidebar_filters()
+start, end, prev_start, prev_end, period_label, _, business_unit = sidebar_filters()
+bu_clause = bu_filter_sql(business_unit)
 
 page_header("Cash Flow & Bank Position",
             f"{period_label} · Lenco + 9japay")
@@ -25,12 +26,13 @@ page_header("Cash Flow & Bank Position",
 cash_kpi = run_query(f"""
     WITH real_balance AS (
         SELECT COALESCE(SUM(account_current_balance_amount::numeric), 0) AS balance
-        FROM bv.bv_lenco_accounts
+        FROM gold.dim_lenco_accounts
+        WHERE 1=1 {bu_clause}
     ),
     after_period AS (
         SELECT COALESCE(SUM(daily_net_movement_amount), 0) AS net_after
         FROM gold.fact_cash_position
-        WHERE cash_position_date > '{end}'
+        WHERE cash_position_date > '{end}' {bu_clause}
     ),
     flows AS (
         SELECT
@@ -45,7 +47,7 @@ cash_kpi = run_query(f"""
             SUM(CASE WHEN cash_position_date BETWEEN '{prev_start}' AND '{prev_end}'
                      THEN daily_outflow_amount END)      AS prev_outflow
         FROM gold.fact_cash_position
-        WHERE cash_position_date BETWEEN '{prev_start}' AND '{end}'
+        WHERE cash_position_date BETWEEN '{prev_start}' AND '{end}' {bu_clause}
     ),
     burn AS (
         SELECT
@@ -58,7 +60,7 @@ cash_kpi = run_query(f"""
                      / NULLIF(SUM(CASE WHEN cash_position_date >= CURRENT_DATE - 90
                                        THEN 1 END), 0), 0) AS avg_daily_burn_90d
         FROM gold.fact_cash_position
-        WHERE cash_position_date >= CURRENT_DATE - 90
+        WHERE cash_position_date >= CURRENT_DATE - 90 {bu_clause}
     )
     SELECT
         real_balance.balance - after_period.net_after                           AS closing_balance,
@@ -72,22 +74,26 @@ cash_kpi = run_query(f"""
     FROM real_balance, after_period, flows, burn
 """)
 
-account_balances = run_query("""
+account_balances = run_query(f"""
     SELECT
         account_name,
-        account_current_balance_amount::numeric AS balance
-    FROM bv.bv_lenco_accounts
+        account_current_balance_amount::numeric AS balance,
+        business_unit,
+        account_purpose
+    FROM gold.dim_lenco_accounts
+    WHERE 1=1 {bu_clause}
     ORDER BY account_current_balance_amount::numeric DESC
 """)
 
 daily_pos = run_query(f"""
     SELECT
         cash_position_date,
-        daily_inflow_amount       AS inflow,
-        daily_outflow_amount      AS outflow,
-        daily_net_movement_amount AS net
+        SUM(daily_inflow_amount)       AS inflow,
+        SUM(daily_outflow_amount)      AS outflow,
+        SUM(daily_net_movement_amount) AS net
     FROM gold.fact_cash_position
-    WHERE cash_position_date BETWEEN '{start}' AND '{end}'
+    WHERE cash_position_date BETWEEN '{start}' AND '{end}' {bu_clause}
+    GROUP BY cash_position_date
     ORDER BY cash_position_date
 """)
 
@@ -99,7 +105,7 @@ monthly_flows = run_query(f"""
         SUM(daily_outflow_amount) / 1e6         AS outflow_m,
         SUM(daily_net_movement_amount) / 1e6    AS net_m
     FROM gold.fact_cash_position
-    WHERE cash_position_date BETWEEN '{start}' AND '{end}'
+    WHERE cash_position_date BETWEEN '{start}' AND '{end}' {bu_clause}
     GROUP BY cash_position_month
     ORDER BY cash_position_month
 """)
@@ -107,12 +113,10 @@ monthly_flows = run_query(f"""
 inflow_sources = run_query(f"""
     SELECT
         CASE
-            WHEN payment_platform = '9japay'
-                                                                    THEN '9japay (GoSource)'
             WHEN LOWER(transaction_narration) LIKE '%paystack%'
                                                                     THEN 'Paystack (DAASH)'
             WHEN LOWER(transaction_narration) LIKE '%9japay%'
-                                                                    THEN '9japay Settlement (Lenco)'
+                                                                    THEN '9japay Settlement'
             WHEN LOWER(transaction_narration) LIKE '%interest capitalised%'
                                                                     THEN 'Bank Interest'
             WHEN LOWER(transaction_narration) LIKE '%fee cashback%'
@@ -133,22 +137,19 @@ inflow_sources = run_query(f"""
         COUNT(*)                         AS txn_count
     FROM gold.fact_cash_flow
     WHERE transaction_date BETWEEN '{start}' AND '{end}'
-      AND cash_flow_direction = 'Inflow'
+      AND cash_flow_direction = 'Inflow' {bu_clause}
     GROUP BY 1
     ORDER BY amount DESC
 """)
 
 outflow_categories = run_query(f"""
     SELECT
-        CASE
-            WHEN payment_platform = '9japay' THEN '9japay Virtual Account Sweep'
-            ELSE COALESCE(transaction_category, 'Uncategorised')
-        END                                              AS category,
+        COALESCE(transaction_category, 'Uncategorised') AS category,
         SUM(cash_outflow_amount)                         AS amount,
         COUNT(*)                                         AS txn_count
     FROM gold.fact_cash_flow
     WHERE transaction_date BETWEEN '{start}' AND '{end}'
-      AND cash_flow_direction = 'Outflow'
+      AND cash_flow_direction = 'Outflow' {bu_clause}
     GROUP BY 1
     ORDER BY amount DESC
 """)
@@ -160,7 +161,7 @@ top_inflows = run_query(f"""
         COUNT(*)                AS txn_count
     FROM gold.fact_cash_flow
     WHERE transaction_date BETWEEN '{start}' AND '{end}'
-      AND cash_flow_direction = 'Inflow'
+      AND cash_flow_direction = 'Inflow' {bu_clause}
     GROUP BY transaction_narration
     ORDER BY amount DESC
     LIMIT 10
@@ -174,7 +175,7 @@ top_outflows = run_query(f"""
         COUNT(*)                                                                      AS txn_count
     FROM gold.fact_cash_flow
     WHERE transaction_date BETWEEN '{start}' AND '{end}'
-      AND cash_flow_direction = 'Outflow'
+      AND cash_flow_direction = 'Outflow' {bu_clause}
     GROUP BY transaction_narration, transaction_category
     ORDER BY amount DESC
     LIMIT 15
@@ -257,21 +258,30 @@ c8.metric("⏳ Cash Runway", f"{runway_days:.0f} days" if runway_days else "N/A"
 st.markdown("")
 
 # Cash by Account — live balances as of today
-section_title(f"CASH BY ACCOUNT — Live Balances ({_today_label})")
+bu_label = f" ({business_unit})" if business_unit != "Combined" else " (All)"
+section_title(f"CASH BY ACCOUNT — Live Balances ({_today_label}){bu_label}")
 if not account_balances.empty:
     total_bal = float(account_balances["balance"].sum())
-    acct_cols = st.columns(len(account_balances))
-    for i, row in account_balances.iterrows():
-        name = row["account_name"].replace("INDEPENDENT PURCHASING COM LTD", "PURCHASING").replace("INDEPENDENT- ", "")
-        bal = float(row["balance"])
-        share = (bal / total_bal * 100) if total_bal > 0 else 0
-        acct_cols[i].metric(
-            f"🏦 {name}",
-            naira(bal),
-            delta=f"{share:.0f}% of total",
-            delta_color="off",
-            help=f"Live balance for {row['account_name']} as of {_today_label}"
-        )
+    n_cols = min(len(account_balances), 6)
+    for chunk_start in range(0, len(account_balances), n_cols):
+        chunk = account_balances.iloc[chunk_start:chunk_start + n_cols]
+        acct_cols = st.columns(len(chunk))
+        for i, (_, row) in enumerate(chunk.iterrows()):
+            name = (row["account_name"]
+                    .replace("INDEPENDENT PURCHASING COM LTD", "PURCHASING")
+                    .replace("INDEPENDENT- ", "")
+                    .replace("GO SOURCE SERVICES-LCO", "GS MAIN")
+                    .replace("GO SOURCE- ", "GS "))
+            bal = float(row["balance"])
+            share = (bal / total_bal * 100) if total_bal > 0 else 0
+            bu_tag = row.get("business_unit", "")
+            acct_cols[i].metric(
+                f"🏦 {name}",
+                naira(bal),
+                delta=f"{share:.0f}% · {bu_tag}",
+                delta_color="off",
+                help=f"Live balance for {row['account_name']} ({bu_tag}) as of {_today_label}"
+            )
 
 st.markdown("")
 

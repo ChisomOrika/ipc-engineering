@@ -1,9 +1,8 @@
 {{ config(materialized='table', schema='gold', tags=['Finance', 'Expenses']) }}
 
--- Operational expense breakdown from Lenco debit transactions only
--- 9japay debits excluded: they are "VIRTUAL ACCOUNT CLOSURE TRANSFER" sweeps
--- (internal money movement from 9japay to Lenco), not real expenses.
-with all_debits as (
+-- Unified expenses from IPC Lenco + GoSource Lenco debit transactions
+-- 9japay debits excluded: they are internal sweep transfers, not real expenses
+with ipc_debits as (
     select
         transaction_id_pk,
         transaction_narration,
@@ -13,11 +12,34 @@ with all_debits as (
         transaction_reference,
         transaction_account_id_fk                      as transaction_account_id,
         transaction_completed_at_date_time::date       as transaction_date,
-        'Lenco'                                        as payment_platform
+        'IPC'                                          as business_unit
     from {{ ref('bv_lenco_transactions') }}
     where transaction_type   = 'debit'
       and transaction_status = 'successful'
       and transaction_completed_at_date_time is not null
+),
+
+gosource_debits as (
+    select
+        transaction_id_pk,
+        transaction_narration,
+        null::text                                     as transaction_category,
+        transaction_amount,
+        transaction_fee_amount,
+        transaction_reference,
+        transaction_account_id_fk                      as transaction_account_id,
+        transaction_completed_at_date_time::date       as transaction_date,
+        'GoSource'                                     as business_unit
+    from {{ ref('bv_gosource_lenco_transactions') }}
+    where transaction_type   = 'debit'
+      and transaction_status = 'successful'
+      and transaction_completed_at_date_time is not null
+),
+
+all_debits as (
+    select * from ipc_debits
+    union all
+    select * from gosource_debits
 )
 
 select
@@ -26,9 +48,8 @@ select
     date_trunc('month', transaction_date)::date                     as expense_month,
     date_trunc('year',  transaction_date)::date                     as expense_year,
     transaction_category                                            as expense_category,
-    payment_platform                                                as expense_platform,
+    business_unit,
 
-    -- High-level grouping for dashboard
     case
         when transaction_category in ('Salaries', 'Staff Welfare', 'Rider Commission')
              then 'People & Payroll'
@@ -47,7 +68,6 @@ select
         else 'Uncategorized'
     end                                                             as expense_group,
 
-    -- Fixed vs variable indicator
     case
         when transaction_category in ('Salaries', 'Utilities', 'Data & Calls',
                                        'Docs & Compliance', 'Repairs & Maintenance')

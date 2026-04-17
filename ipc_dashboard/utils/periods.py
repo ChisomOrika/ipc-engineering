@@ -55,6 +55,13 @@ def sidebar_filters(extra_filters: bool = False):
         prev_end    = start - dt.timedelta(days=1)
         prev_start  = prev_end - dt.timedelta(days=delta_days)
 
+        business_unit = st.selectbox(
+            "Business Unit",
+            ["Combined", "IPC", "GoSource"],
+            index=0,
+            key="bu_filter",
+        )
+
         service_lines = None
         if extra_filters:
             service_lines = st.multiselect(
@@ -75,7 +82,7 @@ def sidebar_filters(extra_filters: bool = False):
             unsafe_allow_html=True,
         )
 
-    return start, end, prev_start, prev_end, period, service_lines
+    return start, end, prev_start, prev_end, period, service_lines, business_unit
 
 
 def svc_filter_sql(service_lines) -> str:
@@ -85,3 +92,10 @@ def svc_filter_sql(service_lines) -> str:
     if len(service_lines) == 1:
         return f"AND service_line = '{service_lines[0]}'"
     return ""
+
+
+def bu_filter_sql(business_unit, col="business_unit") -> str:
+    """Return SQL AND clause for business unit filter, or empty string."""
+    if not business_unit or business_unit == "Combined":
+        return ""
+    return f"AND {col} = '{business_unit}'"

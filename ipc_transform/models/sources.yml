@@ -90,6 +90,17 @@ sources:
       - name: transactions
         description: "9japay virtual account transactions (credits = customer payments in, debits = closure sweeps)."
 
+  - name: gosource_lenco_main
+    database: PROD_ANALYTICS_DB
+    schema: raw_gosource_lenco
+    tables:
+      - name: accounts
+        description: "GoSource Lenco bank sub-accounts (6 accounts: main, admin, procurement 1 & 2, frozen foods, service payments)."
+      - name: transactions
+        description: "GoSource Lenco debit/credit transactions across all sub-accounts."
+      - name: recipients
+        description: "GoSource Lenco saved transfer recipients."
+
   - name: gosource_main
     database: PROD_ANALYTICS_DB
     schema: raw_gosource
