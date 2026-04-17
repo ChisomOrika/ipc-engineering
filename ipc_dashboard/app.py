@@ -106,8 +106,8 @@ kpi = run_query(f"""
         WHERE cash_position_date >= CURRENT_DATE - 90
     ),
     real_balance AS (
-        SELECT account_current_balance_amount::numeric AS balance
-        FROM bv.bv_lenco_accounts LIMIT 1
+        SELECT COALESCE(SUM(account_current_balance_amount::numeric), 0) AS balance
+        FROM bv.bv_lenco_accounts
     )
     SELECT
         rev.curr_rev,    rev.curr_orders,
@@ -271,9 +271,9 @@ with c2:
         delta=f"Runway: {runway_days:.0f} days" if runway_days else "Runway: N/A",
         delta_color="off",
         help=(
-            "Live balance from Lenco accounts API (Providus Bank). "
-            "9japay virtual account balances are swept to Lenco daily. "
-            "Runway = balance ÷ avg daily burn (Lenco + 9japay, 90-day average). "
+            "Total live balance across all 5 Lenco sub-accounts (Providus Bank). "
+            "Accounts: Purchasing, Admin, Management, Payments, Marketing. "
+            "Runway = total balance ÷ avg daily burn (21-day average). "
             "Source: bv.bv_lenco_accounts"
         )
     )

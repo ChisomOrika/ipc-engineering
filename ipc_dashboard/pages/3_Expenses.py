@@ -113,6 +113,16 @@ exp_ratio  = (total_exp / revenue * 100) if revenue > 0 else 0
 fixed_pct  = (fixed_exp / total_exp * 100) if total_exp > 0 else 0
 top_group  = by_group.iloc[0]["expense_group"] if not by_group.empty else "—"
 
+payroll_exp = 0
+overhead_exp = 0
+if not by_group.empty:
+    payroll_groups = by_group[by_group["expense_group"] == "People & Payroll"]
+    payroll_exp = float(payroll_groups["amount"].sum()) if not payroll_groups.empty else 0
+    overhead_groups = by_group[by_group["expense_group"].isin(["Admin & Compliance", "Operations & Maintenance", "Bank & Finance"])]
+    overhead_exp = float(overhead_groups["amount"].sum()) if not overhead_groups.empty else 0
+payroll_pct = (payroll_exp / revenue * 100) if revenue > 0 else 0
+overhead_pct = (overhead_exp / revenue * 100) if revenue > 0 else 0
+
 # ─── KPIs ─────────────────────────────────────────────────────────────────────
 section_title("COST OVERVIEW")
 cols = st.columns(5)
@@ -128,6 +138,17 @@ cols[3].metric("📊 EXPENSE / REVENUE", pct(exp_ratio),
                help="Expenses as % of revenue — lower is better",
                delta=None)
 cols[4].metric("🏷️ TOP CATEGORY", top_group)
+
+st.markdown("")
+ecols = st.columns(3)
+ecols[0].metric("👥 PAYROLL / REVENUE", f"{payroll_pct:.1f}%",
+                delta=naira(payroll_exp), delta_color="off",
+                help="People & Payroll expenses as % of revenue. Includes salaries, staff welfare, rider commissions.")
+ecols[1].metric("🏢 OVERHEAD / REVENUE", f"{overhead_pct:.1f}%",
+                delta=naira(overhead_exp), delta_color="off",
+                help="Admin, operations & bank charges as % of revenue.")
+ecols[2].metric("📋 TRANSACTIONS", count(txn_count),
+                help="Number of expense transactions in the period.")
 
 st.markdown("---")
 

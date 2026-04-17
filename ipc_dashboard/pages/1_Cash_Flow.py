@@ -24,8 +24,8 @@ page_header("Cash Flow & Bank Position",
 
 cash_kpi = run_query(f"""
     WITH real_balance AS (
-        SELECT account_current_balance_amount::numeric AS balance
-        FROM bv.bv_lenco_accounts LIMIT 1
+        SELECT COALESCE(SUM(account_current_balance_amount::numeric), 0) AS balance
+        FROM bv.bv_lenco_accounts
     ),
     after_period AS (
         SELECT COALESCE(SUM(daily_net_movement_amount), 0) AS net_after
@@ -70,6 +70,14 @@ cash_kpi = run_query(f"""
         burn.avg_daily_burn * 30 AS avg_monthly_burn,
         burn.avg_daily_burn_90d
     FROM real_balance, after_period, flows, burn
+""")
+
+account_balances = run_query("""
+    SELECT
+        account_name,
+        account_current_balance_amount::numeric AS balance
+    FROM bv.bv_lenco_accounts
+    ORDER BY account_current_balance_amount::numeric DESC
 """)
 
 daily_pos = run_query(f"""
@@ -240,6 +248,20 @@ c7.metric("🔥 Avg Daily Burn", naira(avg_daily_burn),
           help="Average daily outflow over the last 21 days (Lenco + 9japay debits). 90d trailing shown for comparison.")
 c8.metric("⏳ Cash Runway", f"{runway_days:.0f} days" if runway_days else "N/A",
           help="Current Lenco balance ÷ avg daily burn (Lenco + 9japay, 90-day average).")
+
+st.markdown("")
+
+# Cash by Account — balance breakdown
+section_title("CASH BY ACCOUNT")
+if not account_balances.empty:
+    acct_cols = st.columns(len(account_balances))
+    for i, row in account_balances.iterrows():
+        name = row["account_name"].replace("INDEPENDENT PURCHASING COM LTD", "PURCHASING").replace("INDEPENDENT- ", "")
+        acct_cols[i].metric(
+            f"🏦 {name}",
+            naira(float(row["balance"])),
+            help=f"Live balance for {row['account_name']}"
+        )
 
 st.markdown("")
 
