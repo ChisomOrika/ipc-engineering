@@ -221,7 +221,7 @@ kpi_help = {
     "DAASH ORDERS":    "Delivered DAASH orders in the period. Includes direct (Transfer/Card/Cash) and aggregator (Chowdeck/Glovo) channels. Source: gold.fact_revenue WHERE service_line='DAASH'",
     "GOSOURCE ORDERS": "Delivered + paid GoSource orders in the period. Source: gold.fact_revenue WHERE service_line='GoSource'",
     "AVG ORDER VALUE": "Total Revenue ÷ Total Order Count for the period.",
-    "TOTAL EXPENSES":  "Sum of all Lenco + 9japay debits categorised as business expenses. Source: gold.fact_expenses",
+    "TOTAL EXPENSES":  "Sum of all Lenco debits (IPC + GoSource) categorised as business expenses. Source: gold.fact_expenses",
 }
 cols = st.columns(6)
 kpis = [
@@ -262,7 +262,7 @@ with c1:
         delta=f"90d: {naira(avg_daily_burn_90d)}/day",
         delta_color="off",
         help=(
-            "Average daily outflow over the last 21 days (Lenco + 9japay debits). "
+            "Average daily outflow over the last 21 days (Lenco debits, filtered by business unit). "
             "90-day trailing shown for comparison. "
             "Source: gold.fact_cash_position"
         )
@@ -275,10 +275,10 @@ with c2:
         delta=f"Runway: {runway_days:.0f} days" if runway_days else "Runway: N/A",
         delta_color="off",
         help=(
-            "Total live balance across all 5 Lenco sub-accounts (Providus Bank). "
-            "Accounts: Purchasing, Admin, Management, Payments, Marketing. "
+            "Total live balance across all Lenco sub-accounts (filtered by business unit). "
+            ""
             "Runway = total balance ÷ avg daily burn (21-day average). "
-            "Source: bv.bv_lenco_accounts"
+            "Source: gold.dim_lenco_accounts"
         )
     )
 

@@ -19,7 +19,7 @@ start, end, prev_start, prev_end, period_label, _, business_unit = sidebar_filte
 bu_clause = bu_filter_sql(business_unit)
 
 page_header("Cash Flow & Bank Position",
-            f"{period_label} · Lenco + 9japay")
+            f"{period_label} · Lenco (IPC + GoSource)")
 
 # ─── All queries ──────────────────────────────────────────────────────────────
 
@@ -226,15 +226,15 @@ section_title("(A) CASH POSITION")
 c1, c2, c3, c4 = st.columns(4)
 c1.metric(f"📂 Balance at {_start_label}", naira(opening_balance),
           help=f"Estimated balance on {_start_label}. "
-               "Computed by rewinding today's live balance using all recorded Lenco + 9japay transactions.")
+               "Computed by rewinding today's live balance using all recorded Lenco (IPC + GoSource) transactions.")
 c2.metric(f"📁 Balance at {_end_label}", naira(closing_balance),
           delta=f"{naira(closing_balance - opening_balance)} change in period",
           delta_color="normal" if closing_balance >= opening_balance else "inverse",
           help=f"Estimated balance on {_end_label}. "
                "Derived by rewinding from today's live balance.")
 c3.metric(f"🏦 Today's Balance ({_today_label})", naira(current_balance),
-          help="Live balance across all 5 Lenco sub-accounts (Providus Bank). "
-               "Accounts: Purchasing, Admin, Management, Payments, Marketing.")
+          help="Live balance across all Lenco sub-accounts (IPC + GoSource). "
+               "")
 c4.metric("📊 Period Net Movement", naira(net),
           delta="▲ Positive" if (net or 0) >= 0 else "▼ Negative",
           delta_color="normal" if (net or 0) >= 0 else "inverse")
@@ -251,9 +251,9 @@ c6.metric("📉 Period Outflows", naira(outflow),
 c7.metric("🔥 Avg Daily Burn", naira(avg_daily_burn),
           delta=f"~{naira(avg_monthly_burn)}/mo · 90d: {naira(avg_daily_burn_90d)}/day",
           delta_color="off",
-          help="Average daily outflow over the last 21 days (Lenco + 9japay debits). 90d trailing shown for comparison.")
+          help="Average daily outflow over the last 21 days (Lenco (IPC + GoSource) debits). 90d trailing shown for comparison.")
 c8.metric("⏳ Cash Runway", f"{runway_days:.0f} days" if runway_days else "N/A",
-          help="Total balance across all accounts ÷ avg daily burn (21-day average).")
+          help="Total Lenco balance (filtered by business unit) ÷ avg daily burn (21-day average).")
 
 st.markdown("")
 
@@ -370,7 +370,7 @@ if not monthly_flows.empty:
         line=dict(color=COLOR_CASH, width=2, dash="dot"), marker=dict(size=6),
     ))
     fig_m.update_layout(**CHART_LAYOUT, barmode="group", height=280, yaxis_title="₦M",
-                        title="Monthly Inflows vs Outflows (Lenco + 9japay)")
+                        title="Monthly Inflows vs Outflows (Lenco (IPC + GoSource))")
     st.plotly_chart(fig_m, use_container_width=True)
 
 # Revenue by service line
@@ -475,8 +475,8 @@ if not monthly_flows.empty:
     st.plotly_chart(fig_net, use_container_width=True)
 
 col_n1, col_n2, col_n3 = st.columns(3)
-col_n1.metric("Net Operating Inflows",  naira(inflow),  help="Total Lenco + 9japay credits for the period.")
-col_n2.metric("Net Operating Outflows", naira(outflow), help="Total Lenco + 9japay debits for the period.")
+col_n1.metric("Net Operating Inflows",  naira(inflow),  help="Total Lenco (IPC + GoSource) credits for the period.")
+col_n2.metric("Net Operating Outflows", naira(outflow), help="Total Lenco (IPC + GoSource) debits for the period.")
 col_n3.metric("Overall Net Movement",   naira(net),
               delta="▲ Positive" if (net or 0) >= 0 else "▼ Negative",
               delta_color="normal" if (net or 0) >= 0 else "inverse")
@@ -489,10 +489,10 @@ st.markdown("---")
 section_title("(E) LIQUIDITY & CASH RUNWAY")
 lq1, lq2, lq3 = st.columns(3)
 lq1.metric("🏦 Lenco Account Balance", naira(current_balance),
-           help="Live balance from Lenco API (Providus Bank). 9japay balances are swept here daily.")
+           help="Live balance across all Lenco sub-accounts (filtered by business unit).")
 lq2.metric("🔥 Avg Daily Burn (21d)", naira(avg_daily_burn),
            delta=f"90d trailing: {naira(avg_daily_burn_90d)}/day",
            delta_color="off",
-           help="Average daily outflow over the last 21 days (Lenco + 9japay). 90-day trailing shown for comparison.")
+           help="Average daily outflow over the last 21 days (Lenco (IPC + GoSource)). 90-day trailing shown for comparison.")
 lq3.metric("⏳ Cash Runway", f"{runway_days:.0f} days" if runway_days else "N/A",
-           help="Current Lenco balance ÷ avg daily burn (Lenco + 9japay, 90-day average).")
+           help="Current Lenco balance ÷ avg daily burn (Lenco (IPC + GoSource), 90-day average).")
