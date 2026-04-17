@@ -1,7 +1,9 @@
 {{ config(materialized='table', schema='gold', tags=['Finance', 'Expenses']) }}
 
--- Operational expense breakdown from Lenco + 9japay debit transactions
-with lenco_debits as (
+-- Operational expense breakdown from Lenco debit transactions only
+-- 9japay debits excluded: they are "VIRTUAL ACCOUNT CLOSURE TRANSFER" sweeps
+-- (internal money movement from 9japay to Lenco), not real expenses.
+with all_debits as (
     select
         transaction_id_pk,
         transaction_narration,
@@ -16,28 +18,6 @@ with lenco_debits as (
     where transaction_type   = 'debit'
       and transaction_status = 'successful'
       and transaction_completed_at_date_time is not null
-),
-
-nine_japay_debits as (
-    select
-        transaction_id_pk,
-        transaction_narration,
-        null::text                                     as transaction_category,
-        transaction_amount,
-        null::numeric                                  as transaction_fee_amount,
-        transaction_reference,
-        transaction_account_number                     as transaction_account_id,
-        transaction_date_time::date                    as transaction_date,
-        '9japay'                                       as payment_platform
-    from {{ ref('bv_9japay_transactions') }}
-    where transaction_type = 'debit'
-      and transaction_date_time is not null
-),
-
-all_debits as (
-    select * from lenco_debits
-    union all
-    select * from nine_japay_debits
 )
 
 select
@@ -64,9 +44,6 @@ select
              then 'Admin & Compliance'
         when transaction_category in ('Bank Charges', 'Inward Transfer')
              then 'Bank & Finance'
-        when payment_platform = '9japay'
-             and lower(transaction_narration) like '%virtual account closure%'
-             then 'Virtual Account Sweep'
         else 'Uncategorized'
     end                                                             as expense_group,
 

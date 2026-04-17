@@ -1,8 +1,10 @@
 {{ config(materialized='table', schema='gold', tags=['Finance', 'CashFlow']) }}
 
--- Daily cash flow from Lenco bank + 9japay virtual account transactions
+-- Daily cash flow from Lenco bank transactions only
+-- 9japay excluded: its credits are DAASH customer collections that get swept
+-- to Lenco — including both would double-count the same money.
 -- Credits = cash inflows, Debits = cash outflows
-with lenco_txns as (
+with all_txns as (
     select
         transaction_id_pk,
         transaction_type,
@@ -18,29 +20,6 @@ with lenco_txns as (
     from {{ ref('bv_lenco_transactions') }}
     where transaction_status = 'successful'
       and transaction_completed_at_date_time is not null
-),
-
-nine_japay_txns as (
-    select
-        transaction_id_pk,
-        transaction_type,
-        null::text                                     as transaction_status,
-        null::text                                     as transaction_category,
-        transaction_narration,
-        transaction_amount,
-        null::numeric                                  as transaction_fee_amount,
-        transaction_reference,
-        transaction_account_number                     as transaction_account_id,
-        transaction_date_time::date                    as transaction_date,
-        '9japay'                                       as payment_platform
-    from {{ ref('bv_9japay_transactions') }}
-    where transaction_date_time is not null
-),
-
-all_txns as (
-    select * from lenco_txns
-    union all
-    select * from nine_japay_txns
 ),
 
 fact as (
@@ -75,10 +54,10 @@ fact as (
             when transaction_type = 'debit'  then 'Outflow'
         end                                                 as cash_flow_direction,
 
-        -- Source classification for inflows
+        -- Source classification for inflows (Lenco credits only)
         case
             when transaction_type = 'credit'
-                 and payment_platform = '9japay'                    then '9japay Customer Payment'
+                 and lower(transaction_narration) like '%9japay%'   then '9japay Settlement'
             when transaction_type = 'credit'
                  and lower(transaction_narration) like '%paystack%' then 'Paystack Settlement'
             when transaction_type = 'credit'
