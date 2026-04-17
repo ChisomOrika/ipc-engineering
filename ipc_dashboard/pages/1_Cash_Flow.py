@@ -257,31 +257,34 @@ c8.metric("⏳ Cash Runway", f"{runway_days:.0f} days" if runway_days else "N/A"
 
 st.markdown("")
 
-# Cash by Account — live balances as of today
-bu_label = f" ({business_unit})" if business_unit != "Combined" else " (All)"
-section_title(f"CASH BY ACCOUNT — Live Balances ({_today_label}){bu_label}")
+# Cash by Account — grouped by business unit
+section_title(f"CASH BY ACCOUNT — Live Balances ({_today_label})")
 if not account_balances.empty:
-    total_bal = float(account_balances["balance"].sum())
-    n_cols = min(len(account_balances), 6)
-    for chunk_start in range(0, len(account_balances), n_cols):
-        chunk = account_balances.iloc[chunk_start:chunk_start + n_cols]
-        acct_cols = st.columns(len(chunk))
-        for i, (_, row) in enumerate(chunk.iterrows()):
-            name = (row["account_name"]
-                    .replace("INDEPENDENT PURCHASING COM LTD", "PURCHASING")
-                    .replace("INDEPENDENT- ", "")
-                    .replace("GO SOURCE SERVICES-LCO", "GS MAIN")
-                    .replace("GO SOURCE- ", "GS "))
+    _name_map = {
+        "INDEPENDENT PURCHASING COM LTD": "Purchasing",
+        "INDEPENDENT- ADMIN": "Admin",
+        "INDEPENDENT- MANAGEMENT-LCO": "Management",
+        "INDEPENDENT- PAYMENTS-LCO": "Payments",
+        "INDEPENDENT- MARKETING-LCO": "Marketing",
+        "GO SOURCE SERVICES-LCO": "Main",
+        "GO SOURCE- ADMIN-LCO": "Admin",
+        "GO SOURCE- PROCUREMENT ONE-LCO": "Procurement 1",
+        "GO SOURCE- PROCUREMENT TWO-LCO": "Procurement 2",
+        "GO SOURCE- FROZEN FOODS-LCO": "Frozen Foods",
+        "GO SOURCE- SERVICE PAYMEN-LCO": "Service Payments",
+    }
+    for bu in ["IPC", "GoSource"]:
+        bu_df = account_balances[account_balances["business_unit"] == bu].copy()
+        if bu_df.empty:
+            continue
+        bu_total = float(bu_df["balance"].sum())
+        st.markdown(f"**{bu}** — Total: **{naira(bu_total)}**")
+        cols = st.columns(min(len(bu_df), 5))
+        for i, (_, row) in enumerate(bu_df.iterrows()):
+            label = _name_map.get(row["account_name"], row["account_name"])
             bal = float(row["balance"])
-            share = (bal / total_bal * 100) if total_bal > 0 else 0
-            bu_tag = row.get("business_unit", "")
-            acct_cols[i].metric(
-                f"🏦 {name}",
-                naira(bal),
-                delta=f"{share:.0f}% · {bu_tag}",
-                delta_color="off",
-                help=f"Live balance for {row['account_name']} ({bu_tag}) as of {_today_label}"
-            )
+            cols[i % 5].metric(label, naira(bal))
+        st.markdown("")
 
 st.markdown("")
 
