@@ -216,19 +216,24 @@ runway_days      = (current_balance / avg_daily_burn) if avg_daily_burn > 0 else
 # ══════════════════════════════════════════════════════════════════════════════
 # (a) CASH POSITION
 # ══════════════════════════════════════════════════════════════════════════════
+import datetime as _dt
+_today_label = _dt.date.today().strftime("%d %b %Y")
+_start_label = start.strftime("%d %b %Y") if hasattr(start, "strftime") else str(start)
+_end_label   = end.strftime("%d %b %Y") if hasattr(end, "strftime") else str(end)
+
 section_title("(A) CASH POSITION")
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("📂 Opening Balance", naira(opening_balance),
-          help=f"Estimated balance at the start of {start}. "
-               "= Live balance rewound using all recorded Lenco + 9japay debits/credits from then to now.")
-c2.metric("📁 Closing Balance", naira(closing_balance),
+c1.metric(f"📂 Balance at {_start_label}", naira(opening_balance),
+          help=f"Estimated balance on {_start_label}. "
+               "Computed by rewinding today's live balance using all recorded Lenco + 9japay transactions.")
+c2.metric(f"📁 Balance at {_end_label}", naira(closing_balance),
           delta=f"{naira(closing_balance - opening_balance)} change in period",
           delta_color="normal" if closing_balance >= opening_balance else "inverse",
-          help=f"Estimated balance at end of {end}. "
-               "Derived from Lenco + 9japay transactions.")
-c3.metric("🏦 Current Live Balance", naira(current_balance),
-          help="Live balance from Lenco accounts API (Providus Bank). "
-               "Note: 9japay virtual account balances are swept to Lenco daily.")
+          help=f"Estimated balance on {_end_label}. "
+               "Derived by rewinding from today's live balance.")
+c3.metric(f"🏦 Today's Balance ({_today_label})", naira(current_balance),
+          help="Live balance across all 5 Lenco sub-accounts (Providus Bank). "
+               "Accounts: Purchasing, Admin, Management, Payments, Marketing.")
 c4.metric("📊 Period Net Movement", naira(net),
           delta="▲ Positive" if (net or 0) >= 0 else "▼ Negative",
           delta_color="normal" if (net or 0) >= 0 else "inverse")
@@ -247,20 +252,25 @@ c7.metric("🔥 Avg Daily Burn", naira(avg_daily_burn),
           delta_color="off",
           help="Average daily outflow over the last 21 days (Lenco + 9japay debits). 90d trailing shown for comparison.")
 c8.metric("⏳ Cash Runway", f"{runway_days:.0f} days" if runway_days else "N/A",
-          help="Current Lenco balance ÷ avg daily burn (Lenco + 9japay, 90-day average).")
+          help="Total balance across all accounts ÷ avg daily burn (21-day average).")
 
 st.markdown("")
 
-# Cash by Account — balance breakdown
-section_title("CASH BY ACCOUNT")
+# Cash by Account — live balances as of today
+section_title(f"CASH BY ACCOUNT — Live Balances ({_today_label})")
 if not account_balances.empty:
+    total_bal = float(account_balances["balance"].sum())
     acct_cols = st.columns(len(account_balances))
     for i, row in account_balances.iterrows():
         name = row["account_name"].replace("INDEPENDENT PURCHASING COM LTD", "PURCHASING").replace("INDEPENDENT- ", "")
+        bal = float(row["balance"])
+        share = (bal / total_bal * 100) if total_bal > 0 else 0
         acct_cols[i].metric(
             f"🏦 {name}",
-            naira(float(row["balance"])),
-            help=f"Live balance for {row['account_name']}"
+            naira(bal),
+            delta=f"{share:.0f}% of total",
+            delta_color="off",
+            help=f"Live balance for {row['account_name']} as of {_today_label}"
         )
 
 st.markdown("")
