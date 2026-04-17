@@ -9,12 +9,13 @@ from utils.db      import run_query
 from utils.fmt     import naira, pct, count
 from utils.styles  import (inject_css, page_header, section_title, CHART_LAYOUT,
                             COLOR_POSITIVE, COLOR_NEGATIVE, COLOR_NEUTRAL)
-from utils.periods import sidebar_filters
+from utils.periods import sidebar_filters, bu_filter_sql
 
 st.set_page_config(page_title="Expenses · IPC", page_icon="💸", layout="wide")
 inject_css()
 
 start, end, prev_start, prev_end, period_label, _, business_unit = sidebar_filters()
+bu_clause = bu_filter_sql(business_unit)
 
 page_header("Cost Management & Expenses",
             f"{period_label} · Lenco Bank Debits")
@@ -35,7 +36,7 @@ exp_kpi = run_query(f"""
             SUM(CASE WHEN expense_date BETWEEN '{prev_start}' AND '{prev_end}'
                      THEN expense_amount END)                                      AS prev_total
         FROM gold.fact_expenses
-        WHERE expense_date BETWEEN '{prev_start}' AND '{end}'
+        WHERE expense_date BETWEEN '{prev_start}' AND '{end}' {bu_clause}
     ),
     rev AS (
         SELECT SUM(sales_amount) AS revenue
@@ -53,7 +54,7 @@ by_group = run_query(f"""
         SUM(expense_amount) AS amount,
         COUNT(*) AS txns
     FROM gold.fact_expenses
-    WHERE expense_date BETWEEN '{start}' AND '{end}'
+    WHERE expense_date BETWEEN '{start}' AND '{end}' {bu_clause}
     GROUP BY expense_group, expense_type
     ORDER BY amount DESC
 """)
@@ -65,7 +66,7 @@ by_category = run_query(f"""
         SUM(expense_amount) AS amount,
         COUNT(*) AS txns
     FROM gold.fact_expenses
-    WHERE expense_date BETWEEN '{start}' AND '{end}'
+    WHERE expense_date BETWEEN '{start}' AND '{end}' {bu_clause}
     GROUP BY expense_category, expense_group
     ORDER BY amount DESC
 """)
@@ -78,7 +79,7 @@ monthly_by_group = run_query(f"""
         expense_type,
         SUM(expense_amount)/1e6 AS amount_m
     FROM gold.fact_expenses
-    WHERE expense_date BETWEEN '{start}' AND '{end}'
+    WHERE expense_date BETWEEN '{start}' AND '{end}' {bu_clause}
     GROUP BY expense_month, expense_group, expense_type
     ORDER BY expense_month
 """)
@@ -92,7 +93,7 @@ detail = run_query(f"""
         expense_narration,
         expense_amount
     FROM gold.fact_expenses
-    WHERE expense_date BETWEEN '{start}' AND '{end}'
+    WHERE expense_date BETWEEN '{start}' AND '{end}' {bu_clause}
     ORDER BY expense_date DESC
     LIMIT 500
 """)

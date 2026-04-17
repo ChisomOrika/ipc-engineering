@@ -13,7 +13,7 @@ from utils.styles  import (inject_css, page_header, kpi_card, runway_card,
                             section_title, CHART_LAYOUT,
                             COLOR_DAASH, COLOR_GOSOURCE, COLOR_POSITIVE,
                             COLOR_NEGATIVE, COLOR_CASH, COLOR_NEUTRAL)
-from utils.periods import sidebar_filters
+from utils.periods import sidebar_filters, bu_filter_sql
 
 # ─── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -25,9 +25,11 @@ st.set_page_config(
 inject_css()
 
 start, end, prev_start, prev_end, period_label, _, business_unit = sidebar_filters()
+bu_clause = bu_filter_sql(business_unit)
 
+bu_title = f" ({business_unit})" if business_unit != "Combined" else ""
 page_header(
-    "IPC Group — Overview",
+    f"IPC Group — Overview{bu_title}",
     f"Executive Summary · {period_label} · as of {dt.date.today().strftime('%d %b %Y')}"
 )
 
@@ -79,12 +81,13 @@ kpi = run_query(f"""
             SUM(CASE WHEN expense_date BETWEEN '{prev_start}' AND '{prev_end}'
                      THEN expense_amount END)                               AS prev_exp
         FROM gold.fact_expenses
-        WHERE expense_date BETWEEN '{prev_start}' AND '{end}'
+        WHERE expense_date BETWEEN '{prev_start}' AND '{end}' {bu_clause}
     ),
     cash AS (
-        SELECT cumulative_net_movement_amount AS cash_balance
+        SELECT COALESCE(SUM(cumulative_net_movement_amount), 0) AS cash_balance
         FROM gold.fact_cash_position
-        ORDER BY cash_position_date DESC LIMIT 1
+        WHERE cash_position_date = (SELECT MAX(cash_position_date) FROM gold.fact_cash_position)
+          {bu_clause}
     ),
     ar AS (
         SELECT
@@ -103,11 +106,12 @@ kpi = run_query(f"""
                      / NULLIF(SUM(CASE WHEN cash_position_date >= CURRENT_DATE - 90
                                        THEN 1 END), 0), 0) AS avg_daily_burn_90d
         FROM gold.fact_cash_position
-        WHERE cash_position_date >= CURRENT_DATE - 90
+        WHERE cash_position_date >= CURRENT_DATE - 90 {bu_clause}
     ),
     real_balance AS (
         SELECT COALESCE(SUM(account_current_balance_amount::numeric), 0) AS balance
         FROM gold.dim_lenco_accounts
+        WHERE 1=1 {bu_clause}
     )
     SELECT
         rev.curr_rev,    rev.curr_orders,
