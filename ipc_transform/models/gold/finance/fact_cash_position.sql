@@ -21,6 +21,8 @@ gosource_txns as (
     from {{ ref('bv_gosource_lenco_transactions') }}
     where transaction_status = 'successful'
       and transaction_completed_at_date_time is not null
+      and transaction_narration not like 'ACCOUNT TRANSFERS%'
+      and transaction_narration not like 'From GO SOURCE%'
 ),
 
 all_txns as (
