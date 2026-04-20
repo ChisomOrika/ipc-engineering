@@ -28,13 +28,24 @@ exp_kpi = run_query(f"""
             SUM(CASE WHEN expense_date BETWEEN '{start}' AND '{end}'
                      THEN expense_amount END)                                      AS total,
             SUM(CASE WHEN expense_date BETWEEN '{start}' AND '{end}'
-                     AND expense_type='Fixed' THEN expense_amount END)             AS fixed,
+                     AND expense_group = 'Supplies & Procurement'
+                     THEN expense_amount END)                                      AS cogs,
             SUM(CASE WHEN expense_date BETWEEN '{start}' AND '{end}'
-                     AND expense_type='Variable' THEN expense_amount END)          AS variable,
+                     AND expense_group != 'Supplies & Procurement'
+                     THEN expense_amount END)                                      AS opex,
+            SUM(CASE WHEN expense_date BETWEEN '{start}' AND '{end}'
+                     AND expense_type='Fixed' AND expense_group != 'Supplies & Procurement'
+                     THEN expense_amount END)                                      AS fixed,
+            SUM(CASE WHEN expense_date BETWEEN '{start}' AND '{end}'
+                     AND expense_type='Variable' AND expense_group != 'Supplies & Procurement'
+                     THEN expense_amount END)                                      AS variable,
             COUNT(CASE WHEN expense_date BETWEEN '{start}' AND '{end}'
                        THEN 1 END)                                                 AS txn_count,
             SUM(CASE WHEN expense_date BETWEEN '{prev_start}' AND '{prev_end}'
-                     THEN expense_amount END)                                      AS prev_total
+                     THEN expense_amount END)                                      AS prev_total,
+            SUM(CASE WHEN expense_date BETWEEN '{prev_start}' AND '{prev_end}'
+                     AND expense_group != 'Supplies & Procurement'
+                     THEN expense_amount END)                                      AS prev_opex
         FROM gold.fact_expenses
         WHERE expense_date BETWEEN '{prev_start}' AND '{end}' {bu_clause}
     ),
@@ -43,7 +54,8 @@ exp_kpi = run_query(f"""
         FROM gold.fact_revenue
         WHERE revenue_order_date BETWEEN '{start}' AND '{end}'
     )
-    SELECT exp.total, exp.fixed, exp.variable, exp.txn_count, exp.prev_total, rev.revenue
+    SELECT exp.total, exp.cogs, exp.opex, exp.fixed, exp.variable, exp.txn_count,
+           exp.prev_total, exp.prev_opex, rev.revenue
     FROM exp, rev
 """)
 
@@ -105,51 +117,67 @@ def _v(df, col, default=0):
 def _d(c, p): return ((c-p)/p*100) if p and p > 0 else None
 
 total_exp  = _v(exp_kpi, "total")
+cogs       = _v(exp_kpi, "cogs")
+opex       = _v(exp_kpi, "opex")
 prev_total = _v(exp_kpi, "prev_total")
+prev_opex  = _v(exp_kpi, "prev_opex")
 fixed_exp  = _v(exp_kpi, "fixed")
 var_exp    = _v(exp_kpi, "variable")
 txn_count  = int(_v(exp_kpi, "txn_count"))
 revenue    = _v(exp_kpi, "revenue")
-exp_ratio  = (total_exp / revenue * 100) if revenue > 0 else 0
-fixed_pct  = (fixed_exp / total_exp * 100) if total_exp > 0 else 0
-top_group  = by_group.iloc[0]["expense_group"] if not by_group.empty else "—"
+opex_ratio = (opex / revenue * 100) if revenue > 0 else 0
+gross_margin = ((revenue - cogs) / revenue * 100) if revenue > 0 else 0
+fixed_pct  = (fixed_exp / opex * 100) if opex > 0 else 0
 
 payroll_exp = 0
 overhead_exp = 0
 if not by_group.empty:
     payroll_groups = by_group[by_group["expense_group"] == "People & Payroll"]
     payroll_exp = float(payroll_groups["amount"].sum()) if not payroll_groups.empty else 0
-    overhead_groups = by_group[by_group["expense_group"].isin(["Admin & Compliance", "Operations & Maintenance", "Bank & Finance"])]
+    overhead_groups = by_group[by_group["expense_group"].isin(["Admin & Tech", "Operations & Maintenance", "Bank & Finance"])]
     overhead_exp = float(overhead_groups["amount"].sum()) if not overhead_groups.empty else 0
-payroll_pct = (payroll_exp / revenue * 100) if revenue > 0 else 0
-overhead_pct = (overhead_exp / revenue * 100) if revenue > 0 else 0
+payroll_pct = (payroll_exp / opex * 100) if opex > 0 else 0
+overhead_pct = (overhead_exp / opex * 100) if opex > 0 else 0
 
-# ─── KPIs ─────────────────────────────────────────────────────────────────────
-section_title("COST OVERVIEW")
-cols = st.columns(5)
-cols[0].metric("💸 TOTAL EXPENSES", naira(total_exp),
-               delta=(f"{_d(total_exp, prev_total):+.1f}% vs prev"
-                      if _d(total_exp, prev_total) is not None else None),
-               delta_color="inverse")
-cols[1].metric("🔒 FIXED COSTS",   naira(fixed_exp),
-               delta=f"{fixed_pct:.1f}% of total", delta_color="off")
-cols[2].metric("⚡ VARIABLE COSTS", naira(var_exp),
-               delta=f"{100-fixed_pct:.1f}% of total", delta_color="off")
-cols[3].metric("📊 EXPENSE / REVENUE", pct(exp_ratio),
-               help="Expenses as % of revenue — lower is better",
-               delta=None)
-cols[4].metric("🏷️ TOP CATEGORY", top_group)
+# ─── COGS vs OpEx split ──────────────────────────────────────────────────────
+section_title("COST OF GOODS vs OPERATING EXPENSES")
+st.caption("COGS = what we pay suppliers for goods we resell (GoSource procurement). OpEx = cost of running the business.")
+
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("📦 COGS (Procurement)", naira(cogs),
+          help="Cost of goods sold — supplier payments for food, packaging, ingredients. This is NOT an operating expense, it's the cost of inventory.")
+c2.metric("🏢 OPERATING EXPENSES", naira(opex),
+          delta=(f"{_d(opex, prev_opex):+.1f}% vs prev"
+                 if _d(opex, prev_opex) is not None else None),
+          delta_color="inverse",
+          help="Actual cost of running the business — salaries, rent, tech, logistics, admin. Excludes procurement/COGS.")
+c3.metric("📊 GROSS MARGIN", f"{gross_margin:.1f}%",
+          help="(GMV − COGS) ÷ GMV. How much IPC keeps after paying suppliers. Higher = better.")
+c4.metric("📊 OpEx / GMV", f"{opex_ratio:.1f}%",
+          help="Operating expenses as % of GMV. Lower = more efficient operations.")
 
 st.markdown("")
-ecols = st.columns(3)
-ecols[0].metric("👥 PAYROLL / REVENUE", f"{payroll_pct:.1f}%",
-                delta=naira(payroll_exp), delta_color="off",
-                help="People & Payroll expenses as % of revenue. Includes salaries, staff welfare, rider commissions.")
-ecols[1].metric("🏢 OVERHEAD / REVENUE", f"{overhead_pct:.1f}%",
-                delta=naira(overhead_exp), delta_color="off",
-                help="Admin, operations & bank charges as % of revenue.")
-ecols[2].metric("📋 TRANSACTIONS", count(txn_count),
-                help="Number of expense transactions in the period.")
+
+# ─── OpEx breakdown KPIs ─────────────────────────────────────────────────────
+section_title("OPERATING EXPENSE BREAKDOWN")
+cols = st.columns(5)
+cols[0].metric("💸 TOTAL OpEx", naira(opex),
+               delta=(f"{_d(opex, prev_opex):+.1f}% vs prev"
+                      if _d(opex, prev_opex) is not None else None),
+               delta_color="inverse")
+cols[1].metric("🔒 FIXED COSTS", naira(fixed_exp),
+               delta=f"{fixed_pct:.1f}% of OpEx", delta_color="off")
+cols[2].metric("⚡ VARIABLE COSTS", naira(var_exp),
+               delta=f"{100-fixed_pct:.1f}% of OpEx", delta_color="off")
+cols[3].metric("👥 PAYROLL", naira(payroll_exp),
+               delta=f"{payroll_pct:.1f}% of OpEx", delta_color="off",
+               help="Salaries, staff welfare, rider commissions as % of operating expenses.")
+cols[4].metric("🏢 OVERHEAD", naira(overhead_exp),
+               delta=f"{overhead_pct:.1f}% of OpEx", delta_color="off",
+               help="Admin, tech, ops & bank charges as % of operating expenses.")
+
+st.markdown("")
+st.metric("📋 TOTAL TRANSACTIONS", count(txn_count))
 
 st.markdown("---")
 
@@ -157,15 +185,18 @@ st.markdown("---")
 left, right = st.columns([3, 2])
 
 with left:
-    section_title("EXPENSES BY GROUP")
+    section_title("OUTFLOWS BY GROUP (COGS + OpEx)")
     if not by_group.empty:
         group_totals = by_group.groupby("expense_group")["amount"].sum().reset_index()
         group_totals = group_totals.sort_values("amount", ascending=True)
+        group_totals["color"] = group_totals["expense_group"].apply(
+            lambda x: "#F59E0B" if x == "Supplies & Procurement" else "#3B82F6"
+        )
         fig = go.Figure(go.Bar(
             x=group_totals["amount"] / 1e6,
             y=group_totals["expense_group"],
             orientation="h",
-            marker_color="#3B82F6",
+            marker_color=group_totals["color"],
             text=(group_totals["amount"]/1e6).apply(lambda x: f"₦{x:.1f}M"),
             textposition="outside",
         ))
@@ -173,6 +204,7 @@ with left:
                           xaxis_title="₦M", showlegend=False)
         fig.update_xaxes(gridcolor="#F1F5F9")
         st.plotly_chart(fig, use_container_width=True)
+        st.caption("🟡 Yellow = COGS (procurement) · 🔵 Blue = Operating expenses")
 
 with right:
     section_title("FIXED vs VARIABLE SPLIT")
