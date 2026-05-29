@@ -8,8 +8,22 @@ __pycache__/
 venv*/
 ipc_dash/
 
+# Stray Python virtualenvs (not named venv*)
+pyvenv.cfg
+ipc_ingestion/Include/
+ipc_ingestion/Lib/
+ipc_ingestion/Scripts/
+**/Include/site/
+**/Lib/site-packages/
+
 # dbt
 target/
 dbt_packages/
 logs/
 *.log
+.user.yml
+
+# OS junk
+.DS_Store
+**/.DS_Store
+Thumbs.db

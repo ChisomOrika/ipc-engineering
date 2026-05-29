@@ -1,0 +1,9 @@
+psycopg2-binary
+pymongo
+pandas
+python-dotenv
+requests
+urllib3
+certifi
+APScheduler
+dbt-postgres

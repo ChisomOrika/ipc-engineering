@@ -1,0 +1,67 @@
+# DigitalOcean App Platform — IPC Ingestion Worker
+# Runs the APScheduler-based ingestion pipeline (3x daily)
+# and dbt transformations after each ingestion run.
+#
+# Deploy:
+#   1. Push to GitHub
+#   2. DigitalOcean console → Apps → Create App → select this repo
+#   3. DO will auto-detect this spec
+#   4. Add environment variables (see envs below)
+#   5. IMPORTANT: In Settings → add both MongoDB clusters as
+#      "Trusted Sources" for this app's outbound IP
+#
+# The worker stays running 24/7 with APScheduler triggering
+# ingestion at 07:00, 14:00, 19:00 WAT.
+
+name: ipc-ingestion
+
+region: sfo  # Same region as GoSource MongoDB (sfo3)
+
+workers:
+  - name: ingestion-scheduler
+    github:
+      repo: sapaleague/ipc_analytics   # <-- UPDATE to your GitHub org/repo
+      branch: master
+      deploy_on_push: true
+    source_dir: /
+    environment_slug: python
+    instance_size_slug: professional-xs  # $12/mo — 1 vCPU, 512 MB (plenty for ingestion)
+    instance_count: 1
+    run_command: pip install -r ipc_ingestion/requirements.txt && python ipc_ingestion/scheduler.py
+
+    envs:
+      # -- PostgreSQL --
+      - key: PG_HOST
+        scope: RUN_TIME
+        type: SECRET
+      - key: PG_PORT
+        scope: RUN_TIME
+        value: "25060"
+      - key: PG_USER
+        scope: RUN_TIME
+        type: SECRET
+      - key: PG_PASSWORD
+        scope: RUN_TIME
+        type: SECRET
+
+      # -- MongoDB --
+      - key: DASH_URL
+        scope: RUN_TIME
+        type: SECRET
+      - key: GOSOURCE_URL
+        scope: RUN_TIME
+        type: SECRET
+
+      # -- Payment APIs --
+      - key: PAYSTACK_SECRET_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: LENCO_API_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+      - key: 9JAPAY_API_KEY
+        scope: RUN_TIME
+        type: SECRET
+      - key: 9JAPAY_SECRET
+        scope: RUN_TIME
+        type: SECRET
