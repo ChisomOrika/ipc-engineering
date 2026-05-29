@@ -27,3 +27,9 @@ logs/
 .DS_Store
 **/.DS_Store
 Thumbs.db
+
+# Generated reports (regenerated weekly/monthly — not source code)
+*.pptx
+*.pdf
+*.xlsx
+*.docx
