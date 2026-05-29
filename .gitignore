@@ -28,6 +28,11 @@ logs/
 **/.DS_Store
 Thumbs.db
 
+# Personal tool configs (editor / agent / IDE)
+.claude/
+.idea/
+.vscode/
+
 # Generated reports (regenerated weekly/monthly — not source code)
 *.pptx
 *.pdf
