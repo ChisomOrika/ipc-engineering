@@ -61,11 +61,13 @@ HEADERS  = {
 # Nested JSON (dict/list) is stored as TEXT in Postgres — raw, no flattening
 # ---------------------------------------------------------------------------
 
-PER_PAGE   = 500     # Lenco docs don't specify a hard max — 100 is safe
-MAX_RETRIES  = 3
-BACKOFF_BASE = 2
-REQUEST_TIMEOUT = 30
+PER_PAGE   = 100     # Lenco caps perPage at 100 regardless of request
+MAX_RETRIES  = 5
+BACKOFF_BASE = 3     # 3s, 9s, 27s, 81s — gives rate limit time to clear
+REQUEST_TIMEOUT = 60 # increase from 30s — large pages can be slow
 CHUNK_SIZE   = 10_000
+THROTTLE_SECONDS = 2.0   # pause between paginated requests to avoid rate limits (60 req/min cap)
+FLUSH_EVERY_PAGES = 20   # upsert to Postgres every N pages so progress is durable
 SCHEMA       = "raw_lenco"
 
 
@@ -200,12 +202,21 @@ def fetch_paginated(
     table_name: str,
     resume: bool = True,
     extra_params: dict = None,
+    flush_fn = None,
 ) -> pd.DataFrame:
-    all_data     = []
+    """
+    Fetch all pages. Throttles between requests to avoid rate limits.
+    If flush_fn is provided, calls flush_fn(list_of_records) every FLUSH_EVERY_PAGES
+    pages so progress is durably persisted and memory stays bounded.
+    Returns any leftover records not yet flushed (empty list if flush_fn handled all).
+    """
+    buffer       = []   # records since last flush
+    total_rows   = 0
     failed_pages = []
 
     checkpoint = load_checkpoint(pg_conn_params, table_name) if resume else {"last_page": 1, "total_fetched": 0}
     start_page = checkpoint["last_page"]
+    total_rows = checkpoint.get("total_fetched", 0)
     page_count = None   # Will be set from first response
 
     page = start_page
@@ -221,6 +232,7 @@ def fetch_paginated(
             if page_count is None and len(failed_pages) >= 3:
                 log.error(f"[{table_name}] Too many failures before first successful page. Stopping.")
                 break
+            time.sleep(THROTTLE_SECONDS)
             continue
 
         # Extract data — handle both list and dict wrapper structures
@@ -247,9 +259,16 @@ def fetch_paginated(
             log.info(f"[{table_name}] No records on page {page}. Done.")
             break
 
-        all_data.extend(records)
-        save_checkpoint(pg_conn_params, table_name, page + 1, len(all_data))
-        log.info(f"[{table_name}] Page {page}/{page_count}: {len(records)} records (total so far: {len(all_data):,})")
+        buffer.extend(records)
+        total_rows += len(records)
+        save_checkpoint(pg_conn_params, table_name, page + 1, total_rows)
+        log.info(f"[{table_name}] Page {page}/{page_count}: {len(records)} records (total so far: {total_rows:,})")
+
+        # Durable flush every N pages so a kill doesn't lose progress
+        if flush_fn is not None and page % FLUSH_EVERY_PAGES == 0 and buffer:
+            log.info(f"[{table_name}] Flushing {len(buffer):,} buffered rows to Postgres...")
+            flush_fn(buffer)
+            buffer = []
 
         # Stop when we've hit the last page
         if page >= page_count:
@@ -257,12 +276,13 @@ def fetch_paginated(
             break
 
         page += 1
+        time.sleep(THROTTLE_SECONDS)  # throttle to respect rate limits
 
     if failed_pages:
         log.warning(f"[{table_name}] Failed pages (skipped): {failed_pages}")
 
-    log.info(f"[{table_name}] Total fetched: {len(all_data):,}")
-    return pd.DataFrame(all_data)
+    log.info(f"[{table_name}] Total fetched: {total_rows:,}")
+    return pd.DataFrame(buffer)
 
 
 # ---------------------------------------------------------------------------
@@ -481,34 +501,23 @@ def run_job(
     start = time.time()
     log.info(f"--- Starting: {table_name} ---")
 
-    try:
-        # Fetch
-        if paginated:
-            df = fetch_paginated(endpoint, data_key, pg_conn_params, table_name, resume, extra_params)
-        else:
-            df = fetch_single(endpoint, data_key)
+    # Track schema setup state so flush_fn can do it lazily on first real batch
+    schema_ready = {"done": False}
 
-        rows_fetched = len(df)
-
-        if df.empty:
-            log.warning(f"[{table_name}] No data returned. Skipping.")
-            log_run(pg_conn_params, table_name, 0, "empty")
-            return
-
-        # Deduplicate on PK
+    def _prepare_df(df):
         if pk_col in df.columns:
             before = len(df)
             df = df.drop_duplicates(subset=[pk_col], keep="last")
             dropped = before - len(df)
             if dropped > 0:
                 log.warning(f"[{table_name}] Dropped {dropped} duplicate rows on '{pk_col}'")
-
-        # Categorize transactions narration
         if table_name == "transactions" and "narration" in df.columns:
             df = categorize_dataframe(df, narration_col="narration", txn_type_col="type")
-            log.info(f"[{table_name}] Narration categorization applied.")
+        return df
 
-        # Table setup
+    def _ensure_schema(df):
+        if schema_ready["done"]:
+            return
         conn = psycopg2.connect(**pg_conn_params)
         try:
             create_table_if_missing(df, table_name, conn)
@@ -518,8 +527,38 @@ def run_job(
             ensure_indexes(table_name, index_cols, conn)
         finally:
             conn.close()
+        schema_ready["done"] = True
 
-        # Upsert
+    def flush_fn(records):
+        """Upsert a batch of records mid-stream so progress is durable."""
+        df = pd.DataFrame(records)
+        df = _prepare_df(df)
+        if df.empty:
+            return
+        _ensure_schema(df)
+        upsert_dataframe(df, table_name, pk_col, pg_conn_params)
+
+    try:
+        # Fetch (flushes mid-stream when paginated)
+        if paginated:
+            df = fetch_paginated(endpoint, data_key, pg_conn_params, table_name,
+                                 resume, extra_params, flush_fn=flush_fn)
+        else:
+            df = fetch_single(endpoint, data_key)
+
+        rows_fetched = len(df)
+
+        if df.empty:
+            # If paginated, flushes already happened — only "empty" when we got nothing at all
+            log.warning(f"[{table_name}] No residual rows to flush.")
+            log_run(pg_conn_params, table_name, 0, "empty" if not paginated else "success")
+            if paginated:
+                clear_checkpoint(pg_conn_params, table_name)
+            return
+
+        # Residual records (last partial batch for paginated, or full df for non-paginated)
+        df = _prepare_df(df)
+        _ensure_schema(df)
         upsert_dataframe(df, table_name, pk_col, pg_conn_params)
 
         # Clear checkpoint on success

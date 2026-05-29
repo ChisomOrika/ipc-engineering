@@ -50,7 +50,7 @@ SCRIPTS = [
     {"name": "GoSource", "path": os.path.join(BASE_DIR, "gosource_incremental_load.py")},
     {"name": "Lenco",    "path": os.path.join(BASE_DIR, "lenco_incremental_load.py")},
     {"name": "Paystack", "path": os.path.join(BASE_DIR, "paystack_incremental_load.py")},
-    {"name": "9japay",   "path": os.path.join(BASE_DIR, "9jaypay_incremental_load.py")},
+    {"name": "9japay",   "path": os.path.join(BASE_DIR, "9japay_incremental_load.py")},
 ]
 
 
@@ -106,6 +106,32 @@ def run_all_scripts():
         except Exception as e:
             log.error(f"[{name}] Unexpected error: {e}")
             results[name] = "error"
+
+    # Run dbt transformations after ingestion
+    dbt_dir = os.path.join(os.path.dirname(BASE_DIR), "ipc_transform")
+    if os.path.isdir(dbt_dir):
+        log.info("[dbt] Running transformations...")
+        dbt_start = datetime.now()
+        try:
+            dbt_result = subprocess.run(
+                [sys.executable, "-m", "dbt", "run", "--profiles-dir", "."],
+                capture_output=True, text=True, timeout=3600, cwd=dbt_dir,
+            )
+            dbt_elapsed = round((datetime.now() - dbt_start).total_seconds(), 1)
+            if dbt_result.returncode == 0:
+                log.info(f"[dbt] Completed in {dbt_elapsed}s")
+                results["dbt"] = "success"
+            else:
+                log.error(f"[dbt] Failed (exit code {dbt_result.returncode}) in {dbt_elapsed}s")
+                if dbt_result.stderr:
+                    log.error(f"[dbt] stderr:\n" + "\n".join(dbt_result.stderr.strip().splitlines()[-20:]))
+                results["dbt"] = "failed"
+        except subprocess.TimeoutExpired:
+            log.error("[dbt] Timed out after 3600s")
+            results["dbt"] = "timeout"
+        except Exception as e:
+            log.error(f"[dbt] Unexpected error: {e}")
+            results["dbt"] = "error"
 
     # Summary
     total = round((datetime.now() - run_start).total_seconds(), 1)

@@ -39,7 +39,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install psycopg2-binary pymongo pandas python-dotenv requests urllib3 dbt-postgres
+          pip install psycopg2-binary pymongo pandas python-dotenv requests urllib3 dbt-postgres certifi
 
       # ─────────────────────────────────────────────────────────────────────
       # Whitelist this runner's IP on the DO Mongo clusters so the DAASH and

@@ -2,6 +2,14 @@ import requests
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
+
+# Cluster default is read-only since 2026-05-13. Override per-session so writes work.
+_orig_pg_connect = psycopg2.connect
+def _pg_connect_writable(*args, **kwargs):
+    _conn = _orig_pg_connect(*args, **kwargs)
+    _conn.set_session(readonly=False)
+    return _conn
+psycopg2.connect = _pg_connect_writable
 import json
 import time
 import os

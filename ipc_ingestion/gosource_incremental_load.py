@@ -5,6 +5,14 @@ from bson import ObjectId
 from pymongo import MongoClient
 import psycopg2
 from psycopg2.extras import execute_values
+
+# Cluster default is read-only since 2026-05-13. Override per-session so writes work.
+_orig_pg_connect = psycopg2.connect
+def _pg_connect_writable(*args, **kwargs):
+    _conn = _orig_pg_connect(*args, **kwargs)
+    _conn.set_session(readonly=False)
+    return _conn
+psycopg2.connect = _pg_connect_writable
 import numpy as np
 import os
 from dotenv import load_dotenv
@@ -184,7 +192,7 @@ def get_last_max_updated_at(conn, table_name, schema="raw_gosource", timestamp_c
 # ---------------------------------------------------------------------------
 
 def retrieve_new_records(mongo_uri: str, db_name: str, collection_name: str,
-                         last_updated_at=None, lookback_days: int = 7) -> pd.DataFrame:
+                         last_updated_at=None, lookback_days: int = 10) -> pd.DataFrame:
     print(f"  Connecting to MongoDB...")
     client = MongoClient(mongo_uri, serverSelectionTimeoutMS=90000)
     db = client[db_name]
@@ -336,6 +344,17 @@ def upsert_dataframe(
     print(f"  Serializing {len(df):,} rows...")
     df_clean = serialize_dataframe(df)
 
+    # Dedupe on pk_columns to avoid "ON CONFLICT DO UPDATE command cannot affect
+    # row a second time" errors when the batch contains rows with identical
+    # constraint values (e.g. orders with duplicate product line items).
+    pk_present = [c for c in pk_columns if c in df_clean.columns]
+    if pk_present:
+        before = len(df_clean)
+        df_clean = df_clean.drop_duplicates(subset=pk_present, keep="last")
+        dropped = before - len(df_clean)
+        if dropped:
+            print(f"  Deduped {dropped:,} rows on {pk_present} (kept last)")
+
     columns = [f'"{c}"' for c in df_clean.columns]
     columns_str = ", ".join(columns)
     conflict_str = ", ".join(f'"{pk}"' for pk in pk_columns)
@@ -393,7 +412,7 @@ def run_incremental_ingestion(
     pk_columns: list,
     schema: str = "raw_gosource",
     timestamp_column: str = "updatedAt",
-    lookback_days: int = 7,
+    lookback_days: int = 10,
     transform: str = None,
 ):
     try:
@@ -436,6 +455,7 @@ def run_incremental_ingestion(
 
     except Exception as e:
         print(f"  Fatal error for '{collection_name}': {e}")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -443,29 +463,59 @@ def run_incremental_ingestion(
 # ---------------------------------------------------------------------------
 
 INGESTION_JOBS = [
-    {"mongo_collection": "orders",            "pg_table": "receipts",   "pk_columns": ["_id"],                                        "timestamp_column": "updatedAt", "transform": None},
-    {"mongo_collection": "timelines",         "pg_table": "timelines",  "pk_columns": ["_id"],                                        "timestamp_column": "updatedAt", "transform": None},
-    {"mongo_collection": "businesscustomers", "pg_table": "customers",  "pk_columns": ["_id"],                                        "timestamp_column": "updatedAt", "transform": None},
-    {"mongo_collection": "categories",        "pg_table": "categories", "pk_columns": ["_id"],                                        "timestamp_column": "updatedAt", "transform": None},
-    {"mongo_collection": "products",          "pg_table": "products",   "pk_columns": ["_id"],                                        "timestamp_column": "updatedAt", "transform": "transform_products"},
-    {"mongo_collection": "orders",            "pg_table": "orders",     "pk_columns": ["_id", "cartProduct._id", "product._id"],       "timestamp_column": "updatedAt", "transform": "transform_orders"},
+    {"mongo_collection": "orders",            "pg_table": "receipts",          "pk_columns": ["_id"],                                        "timestamp_column": "updatedAt", "transform": None},
+    {"mongo_collection": "timelines",         "pg_table": "timelines",         "pk_columns": ["_id"],                                        "timestamp_column": "updatedAt", "transform": None},
+    {"mongo_collection": "businesscustomers", "pg_table": "customers",         "pk_columns": ["_id"],                                        "timestamp_column": "updatedAt", "transform": None},
+    {"mongo_collection": "categories",        "pg_table": "categories",        "pk_columns": ["_id"],                                        "timestamp_column": "updatedAt", "transform": None},
+    {"mongo_collection": "products",          "pg_table": "products",          "pk_columns": ["_id"],                                        "timestamp_column": "updatedAt", "transform": "transform_products"},
+    {"mongo_collection": "orders",            "pg_table": "orders",            "pk_columns": ["_id", "cartProduct._id", "product._id"],       "timestamp_column": "updatedAt", "transform": "transform_orders"},
+    # --- Engagement / health collections ---
+    {"mongo_collection": "activitylogs",      "pg_table": "activitylogs",      "pk_columns": ["_id"], "timestamp_column": "updatedAt", "transform": None},
+    {"mongo_collection": "branches",          "pg_table": "branches",          "pk_columns": ["_id"], "timestamp_column": "updatedAt", "transform": None},
+    {"mongo_collection": "employees",         "pg_table": "employees",         "pk_columns": ["_id"], "timestamp_column": "updatedAt", "transform": None},
+    {"mongo_collection": "employeeinvites",   "pg_table": "employeeinvites",   "pk_columns": ["_id"], "timestamp_column": "updatedAt", "transform": None},
+    {"mongo_collection": "inventorymovements","pg_table": "inventorymovements","pk_columns": ["_id"], "timestamp_column": "updatedAt", "transform": None},
+    {"mongo_collection": "purchaseorders",    "pg_table": "purchaseorders",    "pk_columns": ["_id"], "timestamp_column": "updatedAt", "transform": None},
+    {"mongo_collection": "requests",          "pg_table": "requests",          "pk_columns": ["_id"], "timestamp_column": "updatedAt", "transform": None},
+    {"mongo_collection": "wallets",           "pg_table": "wallets",           "pk_columns": ["_id"], "timestamp_column": "updatedAt", "transform": None},
 ]
 
 
 def run_all(mongo_uri: str, db_name: str, pg_conn_params: dict, schema: str = "raw_gosource"):
+    errors = []
+    successes = 0
     for job in INGESTION_JOBS:
         print(f"\n--- {job['mongo_collection']} -> {job['pg_table']} ---")
-        run_incremental_ingestion(
-            mongo_uri=mongo_uri,
-            db_name=db_name,
-            collection_name=job["mongo_collection"],
-            pg_conn_params=pg_conn_params,
-            table_name=job["pg_table"],
-            pk_columns=job["pk_columns"],
-            schema=schema,
-            timestamp_column=job["timestamp_column"],
-            transform=job.get("transform"),
-        )
+        try:
+            run_incremental_ingestion(
+                mongo_uri=mongo_uri,
+                db_name=db_name,
+                collection_name=job["mongo_collection"],
+                pg_conn_params=pg_conn_params,
+                table_name=job["pg_table"],
+                pk_columns=job["pk_columns"],
+                schema=schema,
+                timestamp_column=job["timestamp_column"],
+                transform=job.get("transform"),
+            )
+            successes += 1
+        except Exception as e:
+            errors.append(job['mongo_collection'])
+            print(f"  Error: {e}")
+
+    total = len(INGESTION_JOBS)
+    print(f"\n{'='*60}")
+    print(f"GoSource Ingestion Summary: {successes}/{total} succeeded, {len(errors)}/{total} failed")
+    if errors:
+        print(f"Failed collections: {', '.join(errors)}")
+    print(f"{'='*60}")
+
+    if successes == 0:
+        print("\n❌ ALL collections failed — exiting with error")
+        import sys
+        sys.exit(1)
+    elif errors:
+        print(f"\n⚠️  {len(errors)} collection(s) failed but {successes} succeeded — partial success")
 
 
 # ---------------------------------------------------------------------------

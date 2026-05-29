@@ -11,6 +11,14 @@ from bson import ObjectId
 from pymongo import MongoClient
 import psycopg2
 from psycopg2.extras import execute_values
+
+# Cluster default is read-only since 2026-05-13. Override per-session so writes work.
+_orig_pg_connect = psycopg2.connect
+def _pg_connect_writable(*args, **kwargs):
+    _conn = _orig_pg_connect(*args, **kwargs)
+    _conn.set_session(readonly=False)
+    return _conn
+psycopg2.connect = _pg_connect_writable
 import numpy as np
 import os
 from dotenv import load_dotenv
@@ -347,6 +355,7 @@ def run_incremental_ingestion(
 
     except Exception as e:
         print(f"  ❌ Fatal error for '{collection_name}': {e}")
+        raise
 
 
 # --- Config for multiple collections/tables ---
@@ -379,8 +388,10 @@ INGESTION_JOBS = [
 ]
 
 def run_all_ingestions(mongo_uri, db_name, pg_conn_params, schema="raw_dash"):
+    errors = []
+    successes = 0
     for job in INGESTION_JOBS:
-        print(f"\n--- Starting ingestion for '{job['mongo_collection']}' ---")
+        print(f"\n--- {job['mongo_collection']} ---")
         try:
             run_incremental_ingestion(
                 mongo_uri=mongo_uri,
@@ -391,8 +402,24 @@ def run_all_ingestions(mongo_uri, db_name, pg_conn_params, schema="raw_dash"):
                 pk_columns=job['pk_columns'],
                 schema=schema,
             )
+            successes += 1
         except Exception as e:
-            print(f"Error in ingestion job for {job['mongo_collection']}: {e}")
+            errors.append(job['mongo_collection'])
+            print(f"  Error: {e}")
+
+    total = len(INGESTION_JOBS)
+    print(f"\n{'='*60}")
+    print(f"DAASH Ingestion Summary: {successes}/{total} succeeded, {len(errors)}/{total} failed")
+    if errors:
+        print(f"Failed collections: {', '.join(errors)}")
+    print(f"{'='*60}")
+
+    if successes == 0:
+        print("\n❌ ALL collections failed — exiting with error")
+        import sys
+        sys.exit(1)
+    elif errors:
+        print(f"\n⚠️  {len(errors)} collection(s) failed but {successes} succeeded — partial success")
 
 if __name__ == "__main__":
     mongo_uri = os.getenv("DASH_URL")
